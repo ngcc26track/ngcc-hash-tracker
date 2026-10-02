@@ -1,0 +1,1953 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>统一软件性能实测（2026-09-22） · NGCC 哈希设计图谱</title>
+<style>
+:root{--text:#172033;--muted:#5f7187;--line:#dce4ed;--cyan:#0f8587}
+*{box-sizing:border-box}
+body{margin:0;background:#f3f7fb;color:var(--text);font:15px/1.8 Inter,"Noto Sans SC","Microsoft YaHei UI",system-ui,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:40px 20px 64px}
+.back{display:inline-block;margin-bottom:18px;color:var(--cyan);text-decoration:none;font-size:.9rem}
+article{background:#fff;border:1px solid var(--line);border-radius:16px;padding:clamp(20px,4vw,44px);overflow-wrap:anywhere}
+h1{font-size:1.9rem;line-height:1.25;margin:0 0 18px}
+h2{font-size:1.3rem;margin:36px 0 12px;padding-top:12px;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;margin:26px 0 10px}
+table{display:block;overflow-x:auto;border-collapse:collapse;font-size:.84rem;margin:14px 0}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:600}
+code{font:.86em ui-monospace,SFMono-Regular,Consolas,monospace;background:#f1f5f9;padding:1px 5px;border-radius:4px}
+pre{background:#f1f5f9;padding:12px;border-radius:8px;overflow-x:auto}
+blockquote{margin:14px 0;padding:8px 16px;border-left:3px solid #9fcfd0;background:#f4fbfa;color:#3a5163}
+hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="../index.html">← 返回设计图谱</a>
+<article>
+<h1>软件性能实测</h1>
+<p><strong>主口径</strong>：不依赖专用密码指令，AMD Ryzen 7 7800X3D（Zen4），gcc 13.3.0 <code>-march=znver4</code>，
+<code>taskset -c 0</code>，64 KiB 长消息、512 位摘要、单线程单消息，取 <code>rdtsc</code> 周期中位数 ÷ 字节。
+测量日期 2026-09-22。</p>
+<p>征集面向的是通用商用密码杂凑标准，目标平台不能假定都带 AES / SHA 硬件扩展，
+因此<strong>主排名建立在"只允许通用指令集"的条件上</strong>（§1）。允许密码指令的版本见 §3，
+两者只差两行。</p>
+<hr />
+<h2>0. 五条结论</h2>
+<p><strong>一、主排名前六依次为 CHIME 3.442、Megascon 3.668、Cuishen 4.617、ZC-DM 4.685、ZC-DMC 4.720、AXIS 4.787 cpb。</strong>
+完整排名见 §1。</p>
+<p><strong>二、35 个候选里 32 个从一开始就不依赖任何专用密码指令。</strong> 这是编译验证过的：
+把全部候选加上 <code>-mno-aes -mno-vaes -mno-sha -mno-gfni -mno-pclmul -mno-vpclmulqdq</code>
+重新编译，<strong>34 个构建项里 34 个产出与原来逐字节相同的 <code>.so</code>（MD5 全部一致）</strong>，
+只有 Pavelor 与 Wish 编译失败。对这 32 个候选，"禁用密码指令"的代价精确为零。
+反汇编扫描也印证：全场只有 Pavelor（95 条 <code>vaesenc</code>）和 Wish（144 条）发射了密码指令，
+<strong>没有任何候选使用 SHA-NI、GFNI 或 PCLMUL</strong>。</p>
+<p><strong>三、20 / 34 快于 SM3，23 / 34 快于 SHA3-512，10 / 34 快于 SHA-256，2 / 34 快于 SHA-512。</strong>
+这组数字不依赖任何平台假设，是这批候选最稳的一条成果。</p>
+<p><strong>四、短消息上格局不同。</strong> 32 B 上长/短比
+的跨度是 1.6 到 151.6（中位 4.5）：AXIS 从长消息第 6 掉到第 31（固定 1280 拍终结化），
+ZC-DMC 第 5 掉到第 25；反向翻身的是 Duet（第 26 → 第 11）与 MasterCube（第 19 → 第 10）。
+<strong>只看 64 KiB 的排名会掩盖一个量级的差异。</strong> 见 §4。</p>
+<p><strong>五、换编译器对名次的影响大于换 CPU。</strong> 同机同源码，gcc 13.3 换成 11.4，
+cpb 变化从 0.539×（MoFang 反而更快）到 2.645×（Dragon 慢 2.6 倍），中位 1.105；
+而 XeonB 与 Zen4 之间的 cpb 比值中位 0.899、范围 0.581–1.107。见 §5。</p>
+<hr />
+<h2>1. 主排名：只用通用指令集（Zen4）</h2>
+<p>基线在同一条件下测得（OpenSSL 用 <code>OPENSSL_ia32cap</code> 屏蔽 AES-NI / PCLMUL / SHA-NI /
+GFNI / VAES / VPCLMUL 能力位）：</p>
+<table>
+<thead>
+<tr>
+<th>基线</th>
+<th style="text-align: right;">摘要位</th>
+<th style="text-align: right;">允许密码指令</th>
+<th style="text-align: right;"><strong>只用通用指令</strong></th>
+<th style="text-align: right;">MB/s</th>
+<th style="text-align: right;">cpb@32B</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SHA-512</strong></td>
+<td style="text-align: right;">512</td>
+<td style="text-align: right;">4.225</td>
+<td style="text-align: right;"><strong>4.226</strong></td>
+<td style="text-align: right;">992</td>
+<td style="text-align: right;">44.48</td>
+</tr>
+<tr>
+<td><strong>SHA-256</strong></td>
+<td style="text-align: right;">256</td>
+<td style="text-align: right;">2.035</td>
+<td style="text-align: right;"><strong>6.694</strong></td>
+<td style="text-align: right;">626</td>
+<td style="text-align: right;">36.59</td>
+</tr>
+<tr>
+<td><strong>SM3</strong></td>
+<td style="text-align: right;">256</td>
+<td style="text-align: right;">9.323</td>
+<td style="text-align: right;"><strong>9.322</strong></td>
+<td style="text-align: right;">450</td>
+<td style="text-align: right;">45.09</td>
+</tr>
+<tr>
+<td><strong>SHA3-512</strong></td>
+<td style="text-align: right;">512</td>
+<td style="text-align: right;">13.538</td>
+<td style="text-align: right;"><strong>13.515</strong></td>
+<td style="text-align: right;">310</td>
+<td style="text-align: right;">60.89</td>
+</tr>
+</tbody>
+</table>
+<p>只有 SHA-256 受影响：测试机有 SHA-NI，默认 2.035 cpb，屏蔽后退到 AVX2 软件路径 <strong>6.694 cpb</strong>
+（慢 3.29 倍）。其余三个本来就不用密码指令，前后差异 &lt; 0.3%，在噪声内。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">#</th>
+<th>算法</th>
+<th style="text-align: right;">cpb</th>
+<th style="text-align: right;">MB/s</th>
+<th style="text-align: right;">cpb@32B</th>
+<th style="text-align: right;">vs SM3</th>
+<th style="text-align: right;">vs SHA-256</th>
+<th style="text-align: right;">vs SHA-512</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1</td>
+<td><strong>CHIME</strong></td>
+<td style="text-align: right;"><strong>3.442</strong></td>
+<td style="text-align: right;">1217.9</td>
+<td style="text-align: right;">9.88</td>
+<td style="text-align: right;">2.71×</td>
+<td style="text-align: right;">1.95×</td>
+<td style="text-align: right;">1.23×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td><strong>Megascon</strong></td>
+<td style="text-align: right;"><strong>3.668</strong></td>
+<td style="text-align: right;">1142.8</td>
+<td style="text-align: right;">16.53</td>
+<td style="text-align: right;">2.54×</td>
+<td style="text-align: right;">1.82×</td>
+<td style="text-align: right;">1.15×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td><strong>Cuishen</strong></td>
+<td style="text-align: right;"><strong>4.617</strong></td>
+<td style="text-align: right;">908.0</td>
+<td style="text-align: right;">18.69</td>
+<td style="text-align: right;">2.02×</td>
+<td style="text-align: right;">1.45×</td>
+<td style="text-align: right;">0.92×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td><strong>ZC-DM</strong></td>
+<td style="text-align: right;"><strong>4.685</strong></td>
+<td style="text-align: right;">894.8</td>
+<td style="text-align: right;">43.33</td>
+<td style="text-align: right;">1.99×</td>
+<td style="text-align: right;">1.43×</td>
+<td style="text-align: right;">0.90×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td><strong>ZC-DMC</strong></td>
+<td style="text-align: right;"><strong>4.72</strong></td>
+<td style="text-align: right;">888.1</td>
+<td style="text-align: right;">114.13</td>
+<td style="text-align: right;">1.98×</td>
+<td style="text-align: right;">1.42×</td>
+<td style="text-align: right;">0.90×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">6</td>
+<td><strong>AXIS</strong></td>
+<td style="text-align: right;"><strong>4.787</strong></td>
+<td style="text-align: right;">875.8</td>
+<td style="text-align: right;">725.51</td>
+<td style="text-align: right;">1.95×</td>
+<td style="text-align: right;">1.40×</td>
+<td style="text-align: right;">0.88×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">7</td>
+<td><strong>Eijen</strong></td>
+<td style="text-align: right;"><strong>5.488</strong></td>
+<td style="text-align: right;">763.9</td>
+<td style="text-align: right;">34.27</td>
+<td style="text-align: right;">1.70×</td>
+<td style="text-align: right;">1.22×</td>
+<td style="text-align: right;">0.77×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">8</td>
+<td><strong>ZC-EDMC</strong></td>
+<td style="text-align: right;"><strong>5.687</strong></td>
+<td style="text-align: right;">737.1</td>
+<td style="text-align: right;">33.55</td>
+<td style="text-align: right;">1.64×</td>
+<td style="text-align: right;">1.18×</td>
+<td style="text-align: right;">0.74×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">9</td>
+<td><strong>Dragon</strong></td>
+<td style="text-align: right;"><strong>6.005</strong></td>
+<td style="text-align: right;">698.1</td>
+<td style="text-align: right;">26.3</td>
+<td style="text-align: right;">1.55×</td>
+<td style="text-align: right;">1.11×</td>
+<td style="text-align: right;">0.70×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td><strong>FEILIAN</strong></td>
+<td style="text-align: right;"><strong>6.029</strong></td>
+<td style="text-align: right;">695.3</td>
+<td style="text-align: right;">26.3</td>
+<td style="text-align: right;">1.55×</td>
+<td style="text-align: right;">1.11×</td>
+<td style="text-align: right;">0.70×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">11</td>
+<td><strong>WChain</strong></td>
+<td style="text-align: right;"><strong>7.125</strong></td>
+<td style="text-align: right;">588.4</td>
+<td style="text-align: right;">65.13</td>
+<td style="text-align: right;">1.31×</td>
+<td style="text-align: right;">0.94×</td>
+<td style="text-align: right;">0.59×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">12</td>
+<td><strong>QILIN</strong></td>
+<td style="text-align: right;"><strong>7.259</strong></td>
+<td style="text-align: right;">577.5</td>
+<td style="text-align: right;">62.61</td>
+<td style="text-align: right;">1.28×</td>
+<td style="text-align: right;">0.92×</td>
+<td style="text-align: right;">0.58×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">13</td>
+<td><strong>Mozi</strong></td>
+<td style="text-align: right;"><strong>7.464</strong></td>
+<td style="text-align: right;">561.6</td>
+<td style="text-align: right;">33.05</td>
+<td style="text-align: right;">1.25×</td>
+<td style="text-align: right;">0.90×</td>
+<td style="text-align: right;">0.57×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">14</td>
+<td><strong>Thunder</strong></td>
+<td style="text-align: right;"><strong>7.583</strong></td>
+<td style="text-align: right;">552.8</td>
+<td style="text-align: right;">31.5</td>
+<td style="text-align: right;">1.23×</td>
+<td style="text-align: right;">0.88×</td>
+<td style="text-align: right;">0.56×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">15</td>
+<td><strong>Vedak</strong></td>
+<td style="text-align: right;"><strong>7.753</strong></td>
+<td style="text-align: right;">540.7</td>
+<td style="text-align: right;">46.75</td>
+<td style="text-align: right;">1.20×</td>
+<td style="text-align: right;">0.86×</td>
+<td style="text-align: right;">0.55×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">16</td>
+<td><strong>Litchi</strong></td>
+<td style="text-align: right;"><strong>8.485</strong></td>
+<td style="text-align: right;">494.1</td>
+<td style="text-align: right;">37.92</td>
+<td style="text-align: right;">1.10×</td>
+<td style="text-align: right;">0.79×</td>
+<td style="text-align: right;">0.50×</td>
+<td>优化实现仅接受整字节输入（KAT 513/4097）</td>
+</tr>
+<tr>
+<td style="text-align: right;">17</td>
+<td><strong>Laurus</strong></td>
+<td style="text-align: right;"><strong>8.774</strong></td>
+<td style="text-align: right;">477.8</td>
+<td style="text-align: right;">38.23</td>
+<td style="text-align: right;">1.06×</td>
+<td style="text-align: right;">0.76×</td>
+<td style="text-align: right;">0.48×</td>
+<td>优化实现仅接受整字节输入（KAT 513/4097）</td>
+</tr>
+<tr>
+<td style="text-align: right;">18</td>
+<td><strong>Iphe</strong></td>
+<td style="text-align: right;"><strong>8.8</strong></td>
+<td style="text-align: right;">476.4</td>
+<td style="text-align: right;">168.2</td>
+<td style="text-align: right;">1.06×</td>
+<td style="text-align: right;">0.76×</td>
+<td style="text-align: right;">0.48×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">19</td>
+<td><strong>MasterCube</strong></td>
+<td style="text-align: right;"><strong>8.996</strong></td>
+<td style="text-align: right;">466.0</td>
+<td style="text-align: right;">34.94</td>
+<td style="text-align: right;">1.04×</td>
+<td style="text-align: right;">0.74×</td>
+<td style="text-align: right;">0.47×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td><strong>QSH</strong></td>
+<td style="text-align: right;"><strong>9.217</strong></td>
+<td style="text-align: right;">454.8</td>
+<td style="text-align: right;">77.84</td>
+<td style="text-align: right;">1.01×</td>
+<td style="text-align: right;">0.73×</td>
+<td style="text-align: right;">0.46×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">21</td>
+<td><strong>LLH</strong></td>
+<td style="text-align: right;"><strong>10.203</strong></td>
+<td style="text-align: right;">410.8</td>
+<td style="text-align: right;">40.85</td>
+<td style="text-align: right;">0.91×</td>
+<td style="text-align: right;">0.66×</td>
+<td style="text-align: right;">0.41×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">22</td>
+<td><strong>MoFang</strong></td>
+<td style="text-align: right;"><strong>11.301</strong></td>
+<td style="text-align: right;">370.9</td>
+<td style="text-align: right;">55.14</td>
+<td style="text-align: right;">0.82×</td>
+<td style="text-align: right;">0.59×</td>
+<td style="text-align: right;">0.37×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">23</td>
+<td><strong>JuziHash</strong></td>
+<td style="text-align: right;"><strong>12.765</strong></td>
+<td style="text-align: right;">328.4</td>
+<td style="text-align: right;">104.66</td>
+<td style="text-align: right;">0.73×</td>
+<td style="text-align: right;">0.52×</td>
+<td style="text-align: right;">0.33×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">24</td>
+<td><strong>uHash</strong></td>
+<td style="text-align: right;"><strong>14.575</strong></td>
+<td style="text-align: right;">287.6</td>
+<td style="text-align: right;">44.86</td>
+<td style="text-align: right;">0.64×</td>
+<td style="text-align: right;">0.46×</td>
+<td style="text-align: right;">0.29×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">25</td>
+<td><strong>TaiChi</strong></td>
+<td style="text-align: right;"><strong>14.969</strong></td>
+<td style="text-align: right;">280.0</td>
+<td style="text-align: right;">167.25</td>
+<td style="text-align: right;">0.62×</td>
+<td style="text-align: right;">0.45×</td>
+<td style="text-align: right;">0.28×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">26</td>
+<td><strong>Duet</strong></td>
+<td style="text-align: right;"><strong>23.074</strong></td>
+<td style="text-align: right;">181.7</td>
+<td style="text-align: right;">35.99</td>
+<td style="text-align: right;">0.40×</td>
+<td style="text-align: right;">0.29×</td>
+<td style="text-align: right;">0.18×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">27</td>
+<td><strong>AFS-TrEDM</strong></td>
+<td style="text-align: right;"><strong>27.926</strong></td>
+<td style="text-align: right;">150.1</td>
+<td style="text-align: right;">126.1</td>
+<td style="text-align: right;">0.33×</td>
+<td style="text-align: right;">0.24×</td>
+<td style="text-align: right;">0.15×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">28</td>
+<td><strong>XRH-1</strong></td>
+<td style="text-align: right;"><strong>30.57</strong></td>
+<td style="text-align: right;">137.1</td>
+<td style="text-align: right;">84.53</td>
+<td style="text-align: right;">0.30×</td>
+<td style="text-align: right;">0.22×</td>
+<td style="text-align: right;">0.14×</td>
+<td>无可用优化实现，取参考实现</td>
+</tr>
+<tr>
+<td style="text-align: right;">29</td>
+<td><strong>XRH-2</strong></td>
+<td style="text-align: right;"><strong>30.574</strong></td>
+<td style="text-align: right;">137.1</td>
+<td style="text-align: right;">91.0</td>
+<td style="text-align: right;">0.30×</td>
+<td style="text-align: right;">0.22×</td>
+<td style="text-align: right;">0.14×</td>
+<td>无可用优化实现，取参考实现</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td><strong>C-Hash</strong></td>
+<td style="text-align: right;"><strong>32.14</strong></td>
+<td style="text-align: right;">130.4</td>
+<td style="text-align: right;">183.32</td>
+<td style="text-align: right;">0.29×</td>
+<td style="text-align: right;">0.21×</td>
+<td style="text-align: right;">0.13×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">31</td>
+<td><strong>CHAMP</strong></td>
+<td style="text-align: right;"><strong>65.448</strong></td>
+<td style="text-align: right;">64.1</td>
+<td style="text-align: right;">1141.58</td>
+<td style="text-align: right;">0.14×</td>
+<td style="text-align: right;">0.10×</td>
+<td style="text-align: right;">0.07×</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align: right;">32</td>
+<td><strong>Neulaser</strong></td>
+<td style="text-align: right;"><strong>74.517</strong></td>
+<td style="text-align: right;">56.3</td>
+<td style="text-align: right;">326.0</td>
+<td style="text-align: right;">0.12×</td>
+<td style="text-align: right;">0.09×</td>
+<td style="text-align: right;">0.06×</td>
+<td>提交包内无 KAT_2_12 向量，正确性未校验</td>
+</tr>
+<tr>
+<td style="text-align: right;">33</td>
+<td><strong>Pavelor</strong></td>
+<td style="text-align: right;"><strong>127.83</strong></td>
+<td style="text-align: right;">32.8</td>
+<td style="text-align: right;">788.21</td>
+<td style="text-align: right;">0.07×</td>
+<td style="text-align: right;">0.05×</td>
+<td style="text-align: right;">0.03×</td>
+<td>仅参考实现：未提交不依赖密码指令的优化实现</td>
+</tr>
+<tr>
+<td style="text-align: right;">34</td>
+<td><strong>Wish</strong></td>
+<td style="text-align: right;"><strong>3442.04</strong></td>
+<td style="text-align: right;">1.2</td>
+<td style="text-align: right;">6309.81</td>
+<td style="text-align: right;">0.00×</td>
+<td style="text-align: right;">0.00×</td>
+<td style="text-align: right;">0.00×</td>
+<td>仅参考实现：四份优化实现（x86/ARM）全部依赖硬件 AES 轮</td>
+</tr>
+</tbody>
+</table>
+<h3>达标统计</h3>
+<table>
+<thead>
+<tr>
+<th>门槛</th>
+<th style="text-align: right;">达标数</th>
+<th>名单</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>快于 <strong>SHA-512</strong>（4.226）</td>
+<td style="text-align: right;"><strong>2 / 34</strong></td>
+<td>CHIME、Megascon</td>
+</tr>
+<tr>
+<td>快于 <strong>SHA-256</strong>（6.694）</td>
+<td style="text-align: right;"><strong>10 / 34</strong></td>
+<td>第 1–10 名（CHIME … FEILIAN）</td>
+</tr>
+<tr>
+<td>快于 <strong>SM3</strong>（9.322）</td>
+<td style="text-align: right;"><strong>20 / 34</strong></td>
+<td>第 1–20 名（… QSH）</td>
+</tr>
+<tr>
+<td>快于 <strong>SHA3-512</strong>（13.515）</td>
+<td style="text-align: right;"><strong>23 / 34</strong></td>
+<td>第 1–23 名（… Juzi）</td>
+</tr>
+</tbody>
+</table>
+<p>缺 Garnet（优化实现自带 <code>main</code>、无标准 <code>CryptHash</code> 接口），故 34 项而非 35 项。</p>
+<hr />
+<h2>2. Pavelor 与 Wish：这两个数字该怎么读</h2>
+<p>排在末两位的 Pavelor（127.830）与 Wish（3442.040）需要说明，否则容易被误读成"设计有多慢"。</p>
+<p><strong>能测到的只有参考实现。</strong> Pavelor 的 <code>Additional_Implementation/</code> 是空目录；Wish 交了五份实现，
+<strong>四份优化实现（x86 性能/资源、ARM 性能/资源）全部依赖硬件 AES 轮</strong>——两份 x86 各 5 处
+<code>_mm_aesenc_si128</code>，两份 ARM 合计 14 处 <code>vaeseq_u8</code> 与 14 处 <code>vaesmcq_u8</code>——只有参考实现不用。</p>
+<p><strong>参考实现是为可读性写的。</strong> Wish 的 <code>wish.c</code> 只有 257 行，标准 AES S 盒查表加一个 4×4
+MixColumns 矩阵逐字节做 GF 乘法；Pavelor 的参考实现同样逐轮调用一个 C 写的 <code>aesenc()</code>。
+这类写法与认真做过的软件 AES 之间差一到两个数量级。</p>
+<p><strong>所以正确的结论是</strong>：这两家在"无密码指令平台"这个维度上<strong>没有提交任何证据</strong>，
+127.8 / 3442 cpb 是其提交材料的上界而非设计的下界。作为参照，按每字节 2.375 个 AES 轮、
+位切片 AES 轮约 115 门操作估算，Pavelor 的位切片实现应在 <strong>50–100 cpb 量级</strong>，
+仍比表中前列慢一个数量级——<strong>这个设计的取向本来就是押硬件 AES</strong>，只是代价幅度拿不到实测支撑。</p>
+<p><strong>建议</strong>：若征集要求覆盖无密码指令平台，应要求这两家在第二轮补交位切片或查表优化实现；
+在此之前，它们在本口径下的成绩不宜直接进入排名比较，只宜记为"未提交"。</p>
+<hr />
+<h2>3. 允许密码指令的版本：只有两行不同</h2>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">只用通用指令</th>
+<th style="text-align: right;">允许密码指令</th>
+<th style="text-align: right;">变化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pavelor</td>
+<td style="text-align: right;">127.830（第 33）</td>
+<td style="text-align: right;"><strong>1.254（第 1）</strong></td>
+<td style="text-align: right;">÷102</td>
+</tr>
+<tr>
+<td>Wish</td>
+<td style="text-align: right;">3442.040（第 34）</td>
+<td style="text-align: right;"><strong>4.001（第 4）</strong></td>
+<td style="text-align: right;">÷860</td>
+</tr>
+<tr>
+<td>其余 32 项</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">完全相同（二进制逐字节一致）</td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<p>允许密码指令时，Pavelor 1.254 cpb / 3343 MB/s 是全场最快，CHIME 退到第 2，其后各降 1–2 位，
+<strong>相对顺序不变</strong>。此时基线 SHA-256 为 2.035 cpb，<strong>全场只有 Pavelor 快过它</strong>；
+快于 SHA-512（4.225）的是 Pavelor、CHIME、Megascon、Wish 四个。</p>
+<p>Pavelor 在测试机上已贴住端口下界：每字节 2.375 条 <code>AESENC</code>，测试机实测 <code>AESENC</code> 吞吐
+<strong>1.97 条 / TSC 周期</strong>，下界 1.21 cpb，实测 1.254，达成 96%。测试机 VAES-512 实测
+<strong>3.93 个 AES 轮 / TSC 周期</strong>，若补上 VAES 路径下界可降到 0.60 cpb——<strong>提交包里没有这条路径</strong>。</p>
+<hr />
+<hr />
+<h2>4. 短消息：32 B 排名</h2>
+<p>长消息稳态排名掩盖了一个量级的差异。同一批实现在 32 B 上的成绩：</p>
+<p><strong>口径</strong>：32 / 64 / 128 B，同样 512 位摘要、只用通用指令集，但<strong>计时方式不同</strong>——
+用一次 <code>rdtsc</code> 对包住 K 次连续调用再除以 K，因为测试机 <code>rdtsc</code> 的粒度是
+<strong>42 tick（约 10 ns、41 个核心周期）</strong>，逐次计时会把 32 B 的结果量化到 42 的倍数、
+并额外计入一次 <code>rdtsc</code> 开销。
+这测的是<strong>连续处理短消息的摊薄成本</strong>，不是冷启动的单次时延，后者只会更高。</p>
+<p>基线在同一条件下：</p>
+<table>
+<thead>
+<tr>
+<th>基线</th>
+<th style="text-align: right;">cpb@32B</th>
+<th style="text-align: right;">周期/次</th>
+<th style="text-align: right;">cpb@64B</th>
+<th style="text-align: right;">cpb@128B</th>
+<th style="text-align: right;">长消息 cpb</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SHA-256</strong></td>
+<td style="text-align: right;"><strong>36.59</strong></td>
+<td style="text-align: right;">1171</td>
+<td style="text-align: right;">25.87</td>
+<td style="text-align: right;">16.25</td>
+<td style="text-align: right;">6.694</td>
+</tr>
+<tr>
+<td><strong>SHA-512</strong></td>
+<td style="text-align: right;"><strong>44.48</strong></td>
+<td style="text-align: right;">1424</td>
+<td style="text-align: right;">22.43</td>
+<td style="text-align: right;">15.65</td>
+<td style="text-align: right;">4.226</td>
+</tr>
+<tr>
+<td><strong>SM3</strong></td>
+<td style="text-align: right;"><strong>45.09</strong></td>
+<td style="text-align: right;">1443</td>
+<td style="text-align: right;">33.75</td>
+<td style="text-align: right;">23.26</td>
+<td style="text-align: right;">9.322</td>
+</tr>
+<tr>
+<td><strong>SHA3-512</strong></td>
+<td style="text-align: right;"><strong>60.89</strong></td>
+<td style="text-align: right;">1949</td>
+<td style="text-align: right;">29.92</td>
+<td style="text-align: right;">22.54</td>
+<td style="text-align: right;">13.515</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">#</th>
+<th>算法</th>
+<th style="text-align: right;">cpb@32B</th>
+<th style="text-align: right;">周期/次</th>
+<th style="text-align: right;">cpb@64B</th>
+<th style="text-align: right;">cpb@128B</th>
+<th style="text-align: right;">长消息 cpb</th>
+<th style="text-align: right;">长/短比</th>
+<th style="text-align: right;">长消息名次</th>
+<th style="text-align: right;">Δ名次</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1</td>
+<td><strong>CHIME</strong></td>
+<td style="text-align: right;"><strong>9.88</strong></td>
+<td style="text-align: right;">316</td>
+<td style="text-align: right;">8.64</td>
+<td style="text-align: right;">6.24</td>
+<td style="text-align: right;">3.442</td>
+<td style="text-align: right;">2.9×</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td><strong>Megascon</strong></td>
+<td style="text-align: right;"><strong>16.53</strong></td>
+<td style="text-align: right;">529</td>
+<td style="text-align: right;">8.38</td>
+<td style="text-align: right;">8.2</td>
+<td style="text-align: right;">3.668</td>
+<td style="text-align: right;">4.5×</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td><strong>Cuishen</strong></td>
+<td style="text-align: right;"><strong>18.69</strong></td>
+<td style="text-align: right;">598</td>
+<td style="text-align: right;">9.39</td>
+<td style="text-align: right;">9.3</td>
+<td style="text-align: right;">4.617</td>
+<td style="text-align: right;">4.0×</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td><strong>Dragon</strong></td>
+<td style="text-align: right;"><strong>26.3</strong></td>
+<td style="text-align: right;">842</td>
+<td style="text-align: right;">13.27</td>
+<td style="text-align: right;">12.98</td>
+<td style="text-align: right;">6.005</td>
+<td style="text-align: right;">4.4×</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">+5</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td><strong>FEILIAN</strong></td>
+<td style="text-align: right;"><strong>26.3</strong></td>
+<td style="text-align: right;">842</td>
+<td style="text-align: right;">13.11</td>
+<td style="text-align: right;">6.47</td>
+<td style="text-align: right;">6.029</td>
+<td style="text-align: right;">4.4×</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">+5</td>
+</tr>
+<tr>
+<td style="text-align: right;">6</td>
+<td><strong>Thunder</strong></td>
+<td style="text-align: right;"><strong>31.5</strong></td>
+<td style="text-align: right;">1008</td>
+<td style="text-align: right;">15.71</td>
+<td style="text-align: right;">15.56</td>
+<td style="text-align: right;">7.583</td>
+<td style="text-align: right;">4.2×</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">+8</td>
+</tr>
+<tr>
+<td style="text-align: right;">7</td>
+<td><strong>Mozi</strong></td>
+<td style="text-align: right;"><strong>33.05</strong></td>
+<td style="text-align: right;">1058</td>
+<td style="text-align: right;">16.55</td>
+<td style="text-align: right;">15.81</td>
+<td style="text-align: right;">7.464</td>
+<td style="text-align: right;">4.4×</td>
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">+6</td>
+</tr>
+<tr>
+<td style="text-align: right;">8</td>
+<td><strong>ZC-EDMC</strong></td>
+<td style="text-align: right;"><strong>33.55</strong></td>
+<td style="text-align: right;">1074</td>
+<td style="text-align: right;">12.24</td>
+<td style="text-align: right;">11.5</td>
+<td style="text-align: right;">5.687</td>
+<td style="text-align: right;">5.9×</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td style="text-align: right;">9</td>
+<td><strong>Eijen</strong></td>
+<td style="text-align: right;"><strong>34.27</strong></td>
+<td style="text-align: right;">1097</td>
+<td style="text-align: right;">17.15</td>
+<td style="text-align: right;">8.59</td>
+<td style="text-align: right;">5.488</td>
+<td style="text-align: right;">6.2×</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">-2</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td><strong>MasterCube</strong></td>
+<td style="text-align: right;"><strong>34.94</strong></td>
+<td style="text-align: right;">1118</td>
+<td style="text-align: right;">17.51</td>
+<td style="text-align: right;">17.02</td>
+<td style="text-align: right;">8.996</td>
+<td style="text-align: right;">3.9×</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">+9</td>
+</tr>
+<tr>
+<td style="text-align: right;">11</td>
+<td><strong>Duet</strong></td>
+<td style="text-align: right;"><strong>35.99</strong></td>
+<td style="text-align: right;">1152</td>
+<td style="text-align: right;">34.85</td>
+<td style="text-align: right;">26.07</td>
+<td style="text-align: right;">23.074</td>
+<td style="text-align: right;">1.6×</td>
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">+15</td>
+</tr>
+<tr>
+<td style="text-align: right;">12</td>
+<td><strong>Litchi</strong></td>
+<td style="text-align: right;"><strong>37.92</strong></td>
+<td style="text-align: right;">1213</td>
+<td style="text-align: right;">19.2</td>
+<td style="text-align: right;">18.15</td>
+<td style="text-align: right;">8.485</td>
+<td style="text-align: right;">4.5×</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">+4</td>
+</tr>
+<tr>
+<td style="text-align: right;">13</td>
+<td><strong>Laurus</strong></td>
+<td style="text-align: right;"><strong>38.23</strong></td>
+<td style="text-align: right;">1223</td>
+<td style="text-align: right;">19.36</td>
+<td style="text-align: right;">18.27</td>
+<td style="text-align: right;">8.774</td>
+<td style="text-align: right;">4.4×</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">+4</td>
+</tr>
+<tr>
+<td style="text-align: right;">14</td>
+<td><strong>LLH</strong></td>
+<td style="text-align: right;"><strong>40.85</strong></td>
+<td style="text-align: right;">1307</td>
+<td style="text-align: right;">20.59</td>
+<td style="text-align: right;">17.58</td>
+<td style="text-align: right;">10.203</td>
+<td style="text-align: right;">4.0×</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">+7</td>
+</tr>
+<tr>
+<td style="text-align: right;">15</td>
+<td><strong>ZC-DM</strong></td>
+<td style="text-align: right;"><strong>43.33</strong></td>
+<td style="text-align: right;">1386</td>
+<td style="text-align: right;">13.43</td>
+<td style="text-align: right;">13.03</td>
+<td style="text-align: right;">4.685</td>
+<td style="text-align: right;">9.2×</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">-11</td>
+</tr>
+<tr>
+<td style="text-align: right;">16</td>
+<td><strong>uHash</strong></td>
+<td style="text-align: right;"><strong>44.86</strong></td>
+<td style="text-align: right;">1435</td>
+<td style="text-align: right;">22.41</td>
+<td style="text-align: right;">22.35</td>
+<td style="text-align: right;">14.575</td>
+<td style="text-align: right;">3.1×</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">+8</td>
+</tr>
+<tr>
+<td style="text-align: right;">17</td>
+<td><strong>Vedak</strong></td>
+<td style="text-align: right;"><strong>46.75</strong></td>
+<td style="text-align: right;">1496</td>
+<td style="text-align: right;">23.48</td>
+<td style="text-align: right;">11.73</td>
+<td style="text-align: right;">7.753</td>
+<td style="text-align: right;">6.0×</td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">-2</td>
+</tr>
+<tr>
+<td style="text-align: right;">18</td>
+<td><strong>MoFang</strong></td>
+<td style="text-align: right;"><strong>55.14</strong></td>
+<td style="text-align: right;">1765</td>
+<td style="text-align: right;">27.49</td>
+<td style="text-align: right;">13.78</td>
+<td style="text-align: right;">11.301</td>
+<td style="text-align: right;">4.9×</td>
+<td style="text-align: right;">22</td>
+<td style="text-align: right;">+4</td>
+</tr>
+<tr>
+<td style="text-align: right;">19</td>
+<td><strong>QILIN</strong></td>
+<td style="text-align: right;"><strong>62.61</strong></td>
+<td style="text-align: right;">2004</td>
+<td style="text-align: right;">31.38</td>
+<td style="text-align: right;">15.68</td>
+<td style="text-align: right;">7.259</td>
+<td style="text-align: right;">8.6×</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">-7</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td><strong>WChain</strong></td>
+<td style="text-align: right;"><strong>65.13</strong></td>
+<td style="text-align: right;">2084</td>
+<td style="text-align: right;">32.47</td>
+<td style="text-align: right;">16.23</td>
+<td style="text-align: right;">7.125</td>
+<td style="text-align: right;">9.1×</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">-9</td>
+</tr>
+<tr>
+<td style="text-align: right;">21</td>
+<td><strong>QSH</strong></td>
+<td style="text-align: right;"><strong>77.84</strong></td>
+<td style="text-align: right;">2491</td>
+<td style="text-align: right;">38.61</td>
+<td style="text-align: right;">28.47</td>
+<td style="text-align: right;">9.217</td>
+<td style="text-align: right;">8.4×</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">-1</td>
+</tr>
+<tr>
+<td style="text-align: right;">22</td>
+<td><strong>XRH-1</strong></td>
+<td style="text-align: right;"><strong>84.53</strong></td>
+<td style="text-align: right;">2705</td>
+<td style="text-align: right;">43.41</td>
+<td style="text-align: right;">43.62</td>
+<td style="text-align: right;">30.57</td>
+<td style="text-align: right;">2.8×</td>
+<td style="text-align: right;">28</td>
+<td style="text-align: right;">+6</td>
+</tr>
+<tr>
+<td style="text-align: right;">23</td>
+<td><strong>XRH-2</strong></td>
+<td style="text-align: right;"><strong>91.0</strong></td>
+<td style="text-align: right;">2912</td>
+<td style="text-align: right;">42.0</td>
+<td style="text-align: right;">42.21</td>
+<td style="text-align: right;">30.574</td>
+<td style="text-align: right;">3.0×</td>
+<td style="text-align: right;">29</td>
+<td style="text-align: right;">+6</td>
+</tr>
+<tr>
+<td style="text-align: right;">24</td>
+<td><strong>JuziHash</strong></td>
+<td style="text-align: right;"><strong>104.66</strong></td>
+<td style="text-align: right;">3349</td>
+<td style="text-align: right;">52.23</td>
+<td style="text-align: right;">26.24</td>
+<td style="text-align: right;">12.765</td>
+<td style="text-align: right;">8.2×</td>
+<td style="text-align: right;">23</td>
+<td style="text-align: right;">-1</td>
+</tr>
+<tr>
+<td style="text-align: right;">25</td>
+<td><strong>ZC-DMC</strong></td>
+<td style="text-align: right;"><strong>114.13</strong></td>
+<td style="text-align: right;">3652</td>
+<td style="text-align: right;">52.14</td>
+<td style="text-align: right;">31.03</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">24.2×</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">-20</td>
+</tr>
+<tr>
+<td style="text-align: right;">26</td>
+<td><strong>AFS-TrEDM</strong></td>
+<td style="text-align: right;"><strong>126.1</strong></td>
+<td style="text-align: right;">4035</td>
+<td style="text-align: right;">63.1</td>
+<td style="text-align: right;">62.91</td>
+<td style="text-align: right;">27.926</td>
+<td style="text-align: right;">4.5×</td>
+<td style="text-align: right;">27</td>
+<td style="text-align: right;">+1</td>
+</tr>
+<tr>
+<td style="text-align: right;">27</td>
+<td><strong>TaiChi</strong></td>
+<td style="text-align: right;"><strong>167.25</strong></td>
+<td style="text-align: right;">5352</td>
+<td style="text-align: right;">74.92</td>
+<td style="text-align: right;">28.43</td>
+<td style="text-align: right;">14.969</td>
+<td style="text-align: right;">11.2×</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">-2</td>
+</tr>
+<tr>
+<td style="text-align: right;">28</td>
+<td><strong>Iphe</strong></td>
+<td style="text-align: right;"><strong>168.2</strong></td>
+<td style="text-align: right;">5383</td>
+<td style="text-align: right;">88.53</td>
+<td style="text-align: right;">51.81</td>
+<td style="text-align: right;">8.8</td>
+<td style="text-align: right;">19.1×</td>
+<td style="text-align: right;">18</td>
+<td style="text-align: right;">-10</td>
+</tr>
+<tr>
+<td style="text-align: right;">29</td>
+<td><strong>C-Hash</strong></td>
+<td style="text-align: right;"><strong>183.32</strong></td>
+<td style="text-align: right;">5866</td>
+<td style="text-align: right;">90.49</td>
+<td style="text-align: right;">45.57</td>
+<td style="text-align: right;">32.14</td>
+<td style="text-align: right;">5.7×</td>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">+1</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td><strong>Neulaser</strong></td>
+<td style="text-align: right;"><strong>326.0</strong></td>
+<td style="text-align: right;">10432</td>
+<td style="text-align: right;">163.06</td>
+<td style="text-align: right;">154.05</td>
+<td style="text-align: right;">74.517</td>
+<td style="text-align: right;">4.4×</td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">+2</td>
+</tr>
+<tr>
+<td style="text-align: right;">31</td>
+<td><strong>AXIS</strong></td>
+<td style="text-align: right;"><strong>725.51</strong></td>
+<td style="text-align: right;">23216</td>
+<td style="text-align: right;">368.54</td>
+<td style="text-align: right;">186.45</td>
+<td style="text-align: right;">4.787</td>
+<td style="text-align: right;">151.6×</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">-25</td>
+</tr>
+<tr>
+<td style="text-align: right;">32</td>
+<td><strong>Pavelor</strong></td>
+<td style="text-align: right;"><strong>788.21</strong></td>
+<td style="text-align: right;">25223</td>
+<td style="text-align: right;">407.21</td>
+<td style="text-align: right;">214.62</td>
+<td style="text-align: right;">127.83</td>
+<td style="text-align: right;">6.2×</td>
+<td style="text-align: right;">33</td>
+<td style="text-align: right;">+1</td>
+</tr>
+<tr>
+<td style="text-align: right;">33</td>
+<td><strong>CHAMP</strong></td>
+<td style="text-align: right;"><strong>1141.58</strong></td>
+<td style="text-align: right;">36531</td>
+<td style="text-align: right;">602.11</td>
+<td style="text-align: right;">334.15</td>
+<td style="text-align: right;">65.448</td>
+<td style="text-align: right;">17.4×</td>
+<td style="text-align: right;">31</td>
+<td style="text-align: right;">-2</td>
+</tr>
+<tr>
+<td style="text-align: right;">34</td>
+<td><strong>Wish</strong></td>
+<td style="text-align: right;"><strong>6309.81</strong></td>
+<td style="text-align: right;">201914</td>
+<td style="text-align: right;">6156.09</td>
+<td style="text-align: right;">4842.99</td>
+<td style="text-align: right;">3442.04</td>
+<td style="text-align: right;">1.8×</td>
+<td style="text-align: right;">34</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<p><code>Δ名次</code> = 长消息名次 − 短消息名次，正数表示该算法在短消息上相对更强。</p>
+<h3>达标统计（32 B）</h3>
+<table>
+<thead>
+<tr>
+<th>门槛</th>
+<th style="text-align: right;">达标数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>快于 <strong>SHA-256</strong>（36.59）</td>
+<td style="text-align: right;"><strong>11 / 34</strong></td>
+</tr>
+<tr>
+<td>快于 <strong>SHA-512</strong>（44.48）</td>
+<td style="text-align: right;"><strong>15 / 34</strong></td>
+</tr>
+<tr>
+<td>快于 <strong>SM3</strong>（45.09）</td>
+<td style="text-align: right;"><strong>16 / 34</strong></td>
+</tr>
+<tr>
+<td>快于 <strong>SHA3-512</strong>（60.89）</td>
+<td style="text-align: right;"><strong>18 / 34</strong></td>
+</tr>
+</tbody>
+</table>
+<h3>读法</h3>
+<p><strong>一、头部在长短两张表上一致。</strong> 前三名在 64 KiB 与 32 B 上是同一批，名次未变。</p>
+<p><strong>二、长/短比的跨度是 1.6 到 151.6，中位 4.5。</strong> 这个比值本身就是一项设计特征：</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">长/短比</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Duet</td>
+<td style="text-align: right;"><strong>1.6</strong></td>
+<td>全场最平，但因为它长消息本来就慢（23.07 cpb）</td>
+</tr>
+<tr>
+<td>Wish</td>
+<td style="text-align: right;">1.8</td>
+<td>同上，参考实现本身极慢</td>
+</tr>
+<tr>
+<td>XRH-1 / XRH-2</td>
+<td style="text-align: right;">2.8 / 3.0</td>
+<td>固定开销小</td>
+</tr>
+<tr>
+<td>uHash</td>
+<td style="text-align: right;">3.1</td>
+<td>—</td>
+</tr>
+<tr>
+<td><em>（中位数 4.5）</em></td>
+<td style="text-align: right;"></td>
+<td></td>
+</tr>
+<tr>
+<td>ZC-DMC</td>
+<td style="text-align: right;"><strong>24.2</strong></td>
+<td>短消息名次从第 5 掉到第 25</td>
+</tr>
+<tr>
+<td>TaiChi</td>
+<td style="text-align: right;">11.2</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Iphe</td>
+<td style="text-align: right;">19.1</td>
+<td>第 18 → 第 28</td>
+</tr>
+<tr>
+<td>CHAMP</td>
+<td style="text-align: right;">17.4</td>
+<td>—</td>
+</tr>
+<tr>
+<td>AXIS</td>
+<td style="text-align: right;"><strong>151.6</strong></td>
+<td>第 6 → 第 31，见下</td>
+</tr>
+</tbody>
+</table>
+<p><strong>三、AXIS 是最极端的一个：32 B 上 725.5 cpb，一次 32 字节哈希要 2.3 万个周期。</strong>
+根因是它的终结化固定跑 1280 拍，与消息长度无关——长消息上摊薄到约 0.3 cpb 可以忽略，
+短消息上就是全部成本。先前的分析还定位到其中约 80% 是实现层浪费
+（<code>axis_reupfull_constant_seq32</code> 每次哈希做 10240 次逐比特提取，可完全预计算消除），
+但即使消掉，固定开销的量级不变。<strong>只看长消息排名会完全掩盖这一点。</strong></p>
+<p><strong>四、在短消息上翻身的是 Duet、MasterCube、Thunder、uHash、LLH</strong>（Δ名次 +15 / +9 / +8 / +8 / +7）。
+Duet 从第 26 升到第 11 尤其值得注意：它是押硬件的设计，长消息软件成绩垫底，
+但每次调用的固定开销很低。</p>
+<p><strong>五、128 B 上格局又变一次。</strong> FEILIAN 从 32 B 的 26.30 一路降到 128 B 的 6.47，
+Eijen 34.27 → 8.59，Vedak 46.75 → 11.73——这几家的固定开销在两三个分组内就摊掉了；
+而 Thunder（15.56）、MasterCube（17.02）、XRH（43.6 / 42.2）在 128 B 上几乎不再下降，
+说明它们的成本是按分组线性的，不是一次性的。<strong>评审若关心证书链、短报文认证这类场景，
+应当直接看 64 B / 128 B 两列，而不是从 64 KiB 的排名外推。</strong></p>
+<h3>允许密码指令时的短消息格局</h3>
+<p>前三名变成 <strong>Pavelor 9.02、Wish 9.45、CHIME 9.88</strong>，三者只差 10%：</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">32 B cpb</th>
+<th style="text-align: right;">64 KiB cpb</th>
+<th style="text-align: right;">长/短比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pavelor</td>
+<td style="text-align: right;">9.02</td>
+<td style="text-align: right;">1.255</td>
+<td style="text-align: right;">7.2</td>
+</tr>
+<tr>
+<td>Wish</td>
+<td style="text-align: right;">9.45</td>
+<td style="text-align: right;">4.001</td>
+<td style="text-align: right;">2.4</td>
+</tr>
+<tr>
+<td>CHIME</td>
+<td style="text-align: right;">9.88</td>
+<td style="text-align: right;">3.442</td>
+<td style="text-align: right;">2.9</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Pavelor 的 AES 优势在短消息上基本消失</strong>：64 KiB 上它比 CHIME 快 2.74 倍，
+32 B 上只快 1.10 倍——硬件 AES 拉开的是吞吐，不是每次调用的固定成本。
+此时快过 SHA-256（26.99，走 SHA-NI）的有 7 个。</p>
+<hr />
+<h2>5. 编译器的影响大于机器</h2>
+<p>同一台 Zen4、同一份源码、同样 <code>-O3 -march=native</code>、同一个 benchmark 二进制，只换编译器：</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">gcc 13.3</th>
+<th style="text-align: right;">gcc 11.4</th>
+<th style="text-align: right;">gcc11/gcc13</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dragon</td>
+<td style="text-align: right;">6.004</td>
+<td style="text-align: right;">15.883</td>
+<td style="text-align: right;"><strong>2.645</strong></td>
+</tr>
+<tr>
+<td>AFS-TrEDM</td>
+<td style="text-align: right;">32.173</td>
+<td style="text-align: right;">76.545</td>
+<td style="text-align: right;"><strong>2.379</strong></td>
+</tr>
+<tr>
+<td>Eijen</td>
+<td style="text-align: right;">5.488</td>
+<td style="text-align: right;">9.619</td>
+<td style="text-align: right;"><strong>1.753</strong></td>
+</tr>
+<tr>
+<td>Iphe</td>
+<td style="text-align: right;">8.797</td>
+<td style="text-align: right;">13.832</td>
+<td style="text-align: right;"><strong>1.572</strong></td>
+</tr>
+<tr>
+<td>Thunder</td>
+<td style="text-align: right;">7.583</td>
+<td style="text-align: right;">11.333</td>
+<td style="text-align: right;"><strong>1.495</strong></td>
+</tr>
+<tr>
+<td>XRH-1</td>
+<td style="text-align: right;">30.541</td>
+<td style="text-align: right;">43.052</td>
+<td style="text-align: right;"><strong>1.41</strong></td>
+</tr>
+<tr>
+<td>XRH-2</td>
+<td style="text-align: right;">30.49</td>
+<td style="text-align: right;">42.777</td>
+<td style="text-align: right;"><strong>1.403</strong></td>
+</tr>
+<tr>
+<td>TaiChi</td>
+<td style="text-align: right;">14.921</td>
+<td style="text-align: right;">19.237</td>
+<td style="text-align: right;"><strong>1.289</strong></td>
+</tr>
+<tr>
+<td>Wish</td>
+<td style="text-align: right;">3.992</td>
+<td style="text-align: right;">3.012</td>
+<td style="text-align: right;"><strong>0.755</strong></td>
+</tr>
+<tr>
+<td>CHAMP</td>
+<td style="text-align: right;">109.109</td>
+<td style="text-align: right;">71.341</td>
+<td style="text-align: right;"><strong>0.654</strong></td>
+</tr>
+<tr>
+<td>MoFang</td>
+<td style="text-align: right;">11.286</td>
+<td style="text-align: right;">6.082</td>
+<td style="text-align: right;"><strong>0.539</strong></td>
+</tr>
+<tr>
+<td><em>其余 21 项</em></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><em>0.99 – 1.29</em></td>
+</tr>
+</tbody>
+</table>
+<p>中位数 1.105，<strong>范围 0.539–2.645，跨度 4.9 倍</strong>。</p>
+<p>部分原因是 <strong>gcc 11 不认识 Zen4</strong>：<code>-march=native</code> 落到 <code>znver3</code>，并连带打开
+<code>-mprefer-vector-width=128</code>。但这只解释一小部分——显式加回 <code>-mprefer-vector-width=256</code> 后
+Dragon 只从 15.88 改善到 14.69，而 Dragon 是<strong>纯标量 ARX、一条向量指令都没有</strong>。
+其余差异来自标量代码生成本身。</p>
+<p>读法：</p>
+<ul>
+<li><strong>纯标量 ARX 型设计（Dragon、Thunder、Iphe）对编译器版本最敏感</strong>，名次在很大程度上是编译器的名次；</li>
+<li><strong>手写汇编或 intrinsic 密集的设计（Pavelor 1.001、Wish、Cuishen、uHash、Litchi、Vedak）几乎不受影响</strong>——把代码写死反而带来跨工具链的可预测性；</li>
+<li>MoFang 与 Wish 在<strong>旧</strong>编译器上更快，说明新版 gcc 的某些变换对它们是负优化。</li>
+</ul>
+<p><strong>流程建议：第二轮的自评估材料应强制声明编译器版本与完整编译选项。</strong>
+目前各家自报值用的编译器五花八门（MSVC、MSYS2 gcc、Intel C++、未声明），
+在这个 4.9 倍的敏感区间里，不声明编译器的 cpb 基本没有可比性。</p>
+<hr />
+<h2>6. 跨平台对照：Zen4 / XeonA / XeonB</h2>
+<p>同一套变体、同一工具、同为 gcc 13.3。三台机的 ISA 差异：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Zen4</th>
+<th>XeonA（云端）</th>
+<th>XeonB（云端）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU</td>
+<td>Ryzen 7 7800X3D</td>
+<td>Xeon @2.10 GHz</td>
+<td>Xeon @2.80 GHz</td>
+</tr>
+<tr>
+<td>TSC</td>
+<td>4.1920 GHz</td>
+<td>2.1000 GHz</td>
+<td>2.8002 GHz</td>
+</tr>
+<tr>
+<td>专用密码扩展</td>
+<td>AES, <strong>VAES</strong>, <strong>SHA-NI</strong>, <strong>GFNI</strong>, PCLMUL</td>
+<td>AES, VAES, SHA-NI, GFNI, PCLMUL</td>
+<td>AES, PCLMUL</td>
+</tr>
+<tr>
+<td>AVX-512</td>
+<td>F/DQ/BW/VL + IFMA + VBMI</td>
+<td>F/DQ/CD/BW/VL + IFMA + VBMI</td>
+<td>F/DQ/BW/VL</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">Zen4 cpb</th>
+<th style="text-align: right;">XeonA cpb</th>
+<th style="text-align: right;">XeonB cpb</th>
+<th style="text-align: right;">Zen4 MB/s</th>
+<th style="text-align: right;">XeonA MB/s</th>
+<th style="text-align: right;">XeonB MB/s</th>
+<th style="text-align: right;">A/Zen4</th>
+<th style="text-align: right;">B/Zen4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pavelor</td>
+<td style="text-align: right;">1.255</td>
+<td style="text-align: right;">0.866</td>
+<td style="text-align: right;">1.111</td>
+<td style="text-align: right;">3340.8</td>
+<td style="text-align: right;">2424.9</td>
+<td style="text-align: right;">2520.3</td>
+<td style="text-align: right;">0.69</td>
+<td style="text-align: right;">0.885</td>
+</tr>
+<tr>
+<td>CHIME</td>
+<td style="text-align: right;">3.442</td>
+<td style="text-align: right;">2.516</td>
+<td style="text-align: right;">2.862</td>
+<td style="text-align: right;">1217.9</td>
+<td style="text-align: right;">834.7</td>
+<td style="text-align: right;">978.3</td>
+<td style="text-align: right;">0.731</td>
+<td style="text-align: right;">0.831</td>
+</tr>
+<tr>
+<td>Megascon</td>
+<td style="text-align: right;">3.668</td>
+<td style="text-align: right;">2.838</td>
+<td style="text-align: right;">3.259</td>
+<td style="text-align: right;">1142.8</td>
+<td style="text-align: right;">740.0</td>
+<td style="text-align: right;">859.2</td>
+<td style="text-align: right;">0.774</td>
+<td style="text-align: right;">0.888</td>
+</tr>
+<tr>
+<td>Wish</td>
+<td style="text-align: right;">4.001</td>
+<td style="text-align: right;">4.067</td>
+<td style="text-align: right;">3.697</td>
+<td style="text-align: right;">1047.8</td>
+<td style="text-align: right;">516.4</td>
+<td style="text-align: right;">757.4</td>
+<td style="text-align: right;">1.017</td>
+<td style="text-align: right;">0.924</td>
+</tr>
+<tr>
+<td>Cuishen</td>
+<td style="text-align: right;">4.617</td>
+<td style="text-align: right;">3.203</td>
+<td style="text-align: right;">3.659</td>
+<td style="text-align: right;">908.0</td>
+<td style="text-align: right;">655.6</td>
+<td style="text-align: right;">765.2</td>
+<td style="text-align: right;">0.694</td>
+<td style="text-align: right;">0.793</td>
+</tr>
+<tr>
+<td>ZC-DM</td>
+<td style="text-align: right;">4.685</td>
+<td style="text-align: right;">3.445</td>
+<td style="text-align: right;">2.972</td>
+<td style="text-align: right;">894.8</td>
+<td style="text-align: right;">609.6</td>
+<td style="text-align: right;">942.1</td>
+<td style="text-align: right;">0.735</td>
+<td style="text-align: right;">0.634</td>
+</tr>
+<tr>
+<td>ZC-DMC</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">3.516</td>
+<td style="text-align: right;">3.085</td>
+<td style="text-align: right;">888.1</td>
+<td style="text-align: right;">597.3</td>
+<td style="text-align: right;">907.6</td>
+<td style="text-align: right;">0.745</td>
+<td style="text-align: right;">0.654</td>
+</tr>
+<tr>
+<td>AXIS</td>
+<td style="text-align: right;">4.787</td>
+<td style="text-align: right;">3.643</td>
+<td style="text-align: right;">4.261</td>
+<td style="text-align: right;">875.8</td>
+<td style="text-align: right;">576.4</td>
+<td style="text-align: right;">657.1</td>
+<td style="text-align: right;">0.761</td>
+<td style="text-align: right;">0.89</td>
+</tr>
+<tr>
+<td>Eijen</td>
+<td style="text-align: right;">5.488</td>
+<td style="text-align: right;">3.282</td>
+<td style="text-align: right;">4.507</td>
+<td style="text-align: right;">763.9</td>
+<td style="text-align: right;">639.9</td>
+<td style="text-align: right;">621.3</td>
+<td style="text-align: right;">0.598</td>
+<td style="text-align: right;">0.821</td>
+</tr>
+<tr>
+<td>ZC-EDMC</td>
+<td style="text-align: right;">5.687</td>
+<td style="text-align: right;">4.441</td>
+<td style="text-align: right;">3.304</td>
+<td style="text-align: right;">737.1</td>
+<td style="text-align: right;">472.9</td>
+<td style="text-align: right;">847.5</td>
+<td style="text-align: right;">0.781</td>
+<td style="text-align: right;">0.581</td>
+</tr>
+<tr>
+<td>Dragon</td>
+<td style="text-align: right;">6.005</td>
+<td style="text-align: right;">4.028</td>
+<td style="text-align: right;">5.495</td>
+<td style="text-align: right;">698.1</td>
+<td style="text-align: right;">521.4</td>
+<td style="text-align: right;">509.6</td>
+<td style="text-align: right;">0.671</td>
+<td style="text-align: right;">0.915</td>
+</tr>
+<tr>
+<td>FEILIAN</td>
+<td style="text-align: right;">6.029</td>
+<td style="text-align: right;">3.803</td>
+<td style="text-align: right;">4.362</td>
+<td style="text-align: right;">695.3</td>
+<td style="text-align: right;">552.2</td>
+<td style="text-align: right;">641.9</td>
+<td style="text-align: right;">0.631</td>
+<td style="text-align: right;">0.723</td>
+</tr>
+<tr>
+<td>WChain</td>
+<td style="text-align: right;">7.125</td>
+<td style="text-align: right;">4.796</td>
+<td style="text-align: right;">7.579</td>
+<td style="text-align: right;">588.4</td>
+<td style="text-align: right;">437.9</td>
+<td style="text-align: right;">369.4</td>
+<td style="text-align: right;">0.673</td>
+<td style="text-align: right;">1.064</td>
+</tr>
+<tr>
+<td>QILIN</td>
+<td style="text-align: right;">7.259</td>
+<td style="text-align: right;">4.734</td>
+<td style="text-align: right;">6.535</td>
+<td style="text-align: right;">577.5</td>
+<td style="text-align: right;">443.6</td>
+<td style="text-align: right;">428.5</td>
+<td style="text-align: right;">0.652</td>
+<td style="text-align: right;">0.9</td>
+</tr>
+<tr>
+<td>Mozi</td>
+<td style="text-align: right;">7.464</td>
+<td style="text-align: right;">4.454</td>
+<td style="text-align: right;">5.217</td>
+<td style="text-align: right;">561.6</td>
+<td style="text-align: right;">471.5</td>
+<td style="text-align: right;">536.7</td>
+<td style="text-align: right;">0.597</td>
+<td style="text-align: right;">0.699</td>
+</tr>
+<tr>
+<td>Thunder</td>
+<td style="text-align: right;">7.583</td>
+<td style="text-align: right;">4.994</td>
+<td style="text-align: right;">6.863</td>
+<td style="text-align: right;">552.8</td>
+<td style="text-align: right;">420.5</td>
+<td style="text-align: right;">408.0</td>
+<td style="text-align: right;">0.659</td>
+<td style="text-align: right;">0.905</td>
+</tr>
+<tr>
+<td>Vedak</td>
+<td style="text-align: right;">7.753</td>
+<td style="text-align: right;">5.86</td>
+<td style="text-align: right;">7.589</td>
+<td style="text-align: right;">540.7</td>
+<td style="text-align: right;">358.4</td>
+<td style="text-align: right;">369.0</td>
+<td style="text-align: right;">0.756</td>
+<td style="text-align: right;">0.979</td>
+</tr>
+<tr>
+<td>Litchi</td>
+<td style="text-align: right;">8.485</td>
+<td style="text-align: right;">5.675</td>
+<td style="text-align: right;">7.349</td>
+<td style="text-align: right;">494.1</td>
+<td style="text-align: right;">370.0</td>
+<td style="text-align: right;">381.0</td>
+<td style="text-align: right;">0.669</td>
+<td style="text-align: right;">0.866</td>
+</tr>
+<tr>
+<td>Laurus</td>
+<td style="text-align: right;">8.774</td>
+<td style="text-align: right;">6.643</td>
+<td style="text-align: right;">8.177</td>
+<td style="text-align: right;">477.8</td>
+<td style="text-align: right;">316.1</td>
+<td style="text-align: right;">342.4</td>
+<td style="text-align: right;">0.757</td>
+<td style="text-align: right;">0.932</td>
+</tr>
+<tr>
+<td>Iphe</td>
+<td style="text-align: right;">8.8</td>
+<td style="text-align: right;">5.638</td>
+<td style="text-align: right;">9.34</td>
+<td style="text-align: right;">476.4</td>
+<td style="text-align: right;">372.5</td>
+<td style="text-align: right;">299.8</td>
+<td style="text-align: right;">0.641</td>
+<td style="text-align: right;">1.061</td>
+</tr>
+<tr>
+<td>MasterCube</td>
+<td style="text-align: right;">8.996</td>
+<td style="text-align: right;">7.256</td>
+<td style="text-align: right;">8.238</td>
+<td style="text-align: right;">466.0</td>
+<td style="text-align: right;">289.4</td>
+<td style="text-align: right;">339.9</td>
+<td style="text-align: right;">0.807</td>
+<td style="text-align: right;">0.916</td>
+</tr>
+<tr>
+<td>QSH</td>
+<td style="text-align: right;">9.217</td>
+<td style="text-align: right;">8.18</td>
+<td style="text-align: right;">8.604</td>
+<td style="text-align: right;">454.8</td>
+<td style="text-align: right;">256.7</td>
+<td style="text-align: right;">325.4</td>
+<td style="text-align: right;">0.887</td>
+<td style="text-align: right;">0.933</td>
+</tr>
+<tr>
+<td>LLH</td>
+<td style="text-align: right;">10.203</td>
+<td style="text-align: right;">8.378</td>
+<td style="text-align: right;">10.047</td>
+<td style="text-align: right;">410.8</td>
+<td style="text-align: right;">250.7</td>
+<td style="text-align: right;">278.7</td>
+<td style="text-align: right;">0.821</td>
+<td style="text-align: right;">0.985</td>
+</tr>
+<tr>
+<td>MoFang</td>
+<td style="text-align: right;">11.301</td>
+<td style="text-align: right;">8.795</td>
+<td style="text-align: right;">10.553</td>
+<td style="text-align: right;">370.9</td>
+<td style="text-align: right;">238.8</td>
+<td style="text-align: right;">265.3</td>
+<td style="text-align: right;">0.778</td>
+<td style="text-align: right;">0.934</td>
+</tr>
+<tr>
+<td>JuziHash</td>
+<td style="text-align: right;">12.765</td>
+<td style="text-align: right;">8.04</td>
+<td style="text-align: right;">9.669</td>
+<td style="text-align: right;">328.4</td>
+<td style="text-align: right;">261.2</td>
+<td style="text-align: right;">289.6</td>
+<td style="text-align: right;">0.63</td>
+<td style="text-align: right;">0.757</td>
+</tr>
+<tr>
+<td>uHash</td>
+<td style="text-align: right;">14.575</td>
+<td style="text-align: right;">8.457</td>
+<td style="text-align: right;">9.723</td>
+<td style="text-align: right;">287.6</td>
+<td style="text-align: right;">248.3</td>
+<td style="text-align: right;">288.0</td>
+<td style="text-align: right;">0.58</td>
+<td style="text-align: right;">0.667</td>
+</tr>
+<tr>
+<td>TaiChi</td>
+<td style="text-align: right;">14.969</td>
+<td style="text-align: right;">9.667</td>
+<td style="text-align: right;">13.047</td>
+<td style="text-align: right;">280.0</td>
+<td style="text-align: right;">217.2</td>
+<td style="text-align: right;">214.6</td>
+<td style="text-align: right;">0.646</td>
+<td style="text-align: right;">0.872</td>
+</tr>
+<tr>
+<td>Duet</td>
+<td style="text-align: right;">23.074</td>
+<td style="text-align: right;">19.75</td>
+<td style="text-align: right;">25.544</td>
+<td style="text-align: right;">181.7</td>
+<td style="text-align: right;">106.3</td>
+<td style="text-align: right;">109.6</td>
+<td style="text-align: right;">0.856</td>
+<td style="text-align: right;">1.107</td>
+</tr>
+<tr>
+<td>AFS-TrEDM</td>
+<td style="text-align: right;">27.926</td>
+<td style="text-align: right;">12.544</td>
+<td style="text-align: right;">17.422</td>
+<td style="text-align: right;">150.1</td>
+<td style="text-align: right;">167.4</td>
+<td style="text-align: right;">160.7</td>
+<td style="text-align: right;">0.449</td>
+<td style="text-align: right;">0.624</td>
+</tr>
+<tr>
+<td>XRH-1</td>
+<td style="text-align: right;">30.57</td>
+<td style="text-align: right;">21.041</td>
+<td style="text-align: right;">29.429</td>
+<td style="text-align: right;">137.1</td>
+<td style="text-align: right;">99.8</td>
+<td style="text-align: right;">95.1</td>
+<td style="text-align: right;">0.688</td>
+<td style="text-align: right;">0.963</td>
+</tr>
+<tr>
+<td>XRH-2</td>
+<td style="text-align: right;">30.574</td>
+<td style="text-align: right;">21.507</td>
+<td style="text-align: right;">29.606</td>
+<td style="text-align: right;">137.1</td>
+<td style="text-align: right;">97.6</td>
+<td style="text-align: right;">94.6</td>
+<td style="text-align: right;">0.703</td>
+<td style="text-align: right;">0.968</td>
+</tr>
+<tr>
+<td>C-Hash</td>
+<td style="text-align: right;">32.14</td>
+<td style="text-align: right;">24.322</td>
+<td style="text-align: right;">28.902</td>
+<td style="text-align: right;">130.4</td>
+<td style="text-align: right;">86.3</td>
+<td style="text-align: right;">96.9</td>
+<td style="text-align: right;">0.757</td>
+<td style="text-align: right;">0.899</td>
+</tr>
+<tr>
+<td>CHAMP</td>
+<td style="text-align: right;">65.448</td>
+<td style="text-align: right;">45.494</td>
+<td style="text-align: right;">65.149</td>
+<td style="text-align: right;">64.1</td>
+<td style="text-align: right;">46.2</td>
+<td style="text-align: right;">43.0</td>
+<td style="text-align: right;">0.695</td>
+<td style="text-align: right;">0.995</td>
+</tr>
+</tbody>
+</table>
+<p>cpb 比值：<strong>XeonA/Zen4 中位 0.695（0.449–1.017），XeonB/Zen4 中位 0.899（0.581–1.107）</strong>。
+cpb 上 Zen4 普遍吃亏，但 Zen4 跑在 4.19 GHz，换成 MB/s（不依赖频率假设的墙钟吞吐）后
+Zen4 在多数项上领先。</p>
+<p><strong>排名本身相当稳</strong>：Zen4 与 XeonB 的名次差最大 ±4 位，头部（Pavelor / CHIME / Megascon）
+与尾部（CHAMP / XRH / C Hash）在三台机上一致。<strong>需要担心的不是"换台机器排名就翻了"，
+而是换编译器、或目标机器带不带专用指令。</strong></p>
+<p>两个例外值得记下：</p>
+<ul>
+<li><strong>ZC 三兄弟（ZC-DM / ZC-DMC / ZC-EDMC）在 XeonB 上明显更好</strong>（比值 0.58–0.65），
+  是本对照里对微架构最敏感的一组非 AES 设计。</li>
+<li><strong>AFS-TrEDM 是唯一在 Zen4 上绝对吞吐也同时输给两台 Xeon 的候选</strong>，其 AVX2 hybrid 后端
+  在 Zen4 上没有产生预期收益，值得单独复查。</li>
+</ul>
+<hr />
+<h2>7. 全变体明细（云端 XeonB，124 个实现变体）</h2>
+<p>上面各表每个算法只取一个固定变体。要看"同一算法不同实现档位差多少"，
+用的是另一份数据：<strong>35 个算法 × 124 个实现变体，全部通过 <code>KAT_2_12 + 2_23 + 2_33 + Loop</code>
+共 4104 条向量的门槛</strong>（前面各表只过 <code>KAT_2_12</code> 的 4097 条）。</p>
+<p>⚠ <strong>这份数据的绝对值只有指示性</strong>：云端沙箱在几小时内会更换物理机，同一批二进制重测
+可以差 0.48×–1.07×。但它是<strong>一次连续单机测量</strong>，
+<strong>同一份数据内部的比值是可靠的</strong>，下面的结论都只用比值。</p>
+<h3>7.1 参考实现速度完全不能代表设计速度</h3>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">最快变体</th>
+<th style="text-align: right;">最慢变体</th>
+<th style="text-align: right;">倍数</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Wish</td>
+<td style="text-align: right;">add-x86-res 4.63</td>
+<td style="text-align: right;">ref 4809.63</td>
+<td style="text-align: right;"><strong>1040×</strong></td>
+<td>参考实现逐字节查表</td>
+</tr>
+<tr>
+<td>Pavelor</td>
+<td style="text-align: right;">opt 2.30</td>
+<td style="text-align: right;">ref 152.98</td>
+<td style="text-align: right;">66.5×</td>
+<td>参考实现不用 AES-NI</td>
+</tr>
+<tr>
+<td>uHash</td>
+<td style="text-align: right;">opt-linuxfix 9.81</td>
+<td style="text-align: right;">ref 566.52</td>
+<td style="text-align: right;">57.8×</td>
+<td>参考实现按比特建模</td>
+</tr>
+<tr>
+<td>C Hash</td>
+<td style="text-align: right;">opt 32.48</td>
+<td style="text-align: right;">ref 1313.70</td>
+<td style="text-align: right;">40.4×</td>
+<td>参考实现按比特建模</td>
+</tr>
+<tr>
+<td>Vedak</td>
+<td style="text-align: right;">add 8.29</td>
+<td style="text-align: right;">ref 236.58</td>
+<td style="text-align: right;">28.5×</td>
+<td>参考实现按比特建模</td>
+</tr>
+<tr>
+<td>Juzi</td>
+<td style="text-align: right;">opt 11.37</td>
+<td style="text-align: right;">ref 230.91</td>
+<td style="text-align: right;">20.3×</td>
+<td>参考实现按位逐个处理</td>
+</tr>
+<tr>
+<td>QSH</td>
+<td style="text-align: right;">opt 9.39</td>
+<td style="text-align: right;">ref 178.78</td>
+<td style="text-align: right;">19.0×</td>
+<td>—</td>
+</tr>
+<tr>
+<td>TaiChi</td>
+<td style="text-align: right;">opt-per-native 17.56</td>
+<td style="text-align: right;">opt-res 181.56</td>
+<td style="text-align: right;">10.3×</td>
+<td>资源优化档用 <code>-Os</code></td>
+</tr>
+</tbody>
+</table>
+<h3>7.2 五家的"优化实现"跑不赢自己的"参考实现"</h3>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th style="text-align: right;">ref</th>
+<th style="text-align: right;">opt</th>
+<th style="text-align: right;">ref 快出</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WChain</td>
+<td style="text-align: right;"><strong>7.048</strong></td>
+<td style="text-align: right;">8.194</td>
+<td style="text-align: right;">16.2%</td>
+<td>AVX2/AVX-512 只服务 4/8 路批处理接口，单消息路径全标量</td>
+</tr>
+<tr>
+<td>Dragon</td>
+<td style="text-align: right;"><strong>7.011</strong></td>
+<td style="text-align: right;">7.821</td>
+<td style="text-align: right;">11.6%</td>
+<td>优化目录未针对单消息做实质改动</td>
+</tr>
+<tr>
+<td>Neulaser</td>
+<td style="text-align: right;"><strong>64.077</strong></td>
+<td style="text-align: right;">67.623</td>
+<td style="text-align: right;">5.5%</td>
+<td>手工伪梅森模约简跑输 GCC 对常量取模的自动优化</td>
+</tr>
+<tr>
+<td>Eijen</td>
+<td style="text-align: right;"><strong>6.790</strong></td>
+<td style="text-align: right;">6.878</td>
+<td style="text-align: right;">1.3%</td>
+<td>手写 AVX2 置换对单消息是死代码（差异在噪声内）</td>
+</tr>
+<tr>
+<td>XRH-1</td>
+<td style="text-align: right;"><strong>37.185</strong></td>
+<td style="text-align: right;">37.267</td>
+<td style="text-align: right;">0.2%</td>
+<td><code>opt-fromC</code> 与参考实现同源</td>
+</tr>
+</tbody>
+</table>
+<p>另有一条纯编译选项造成的：<strong>Neulaser <code>-O2</code> 178.11 → <code>-O3 -march=native</code> 64.08，2.78×</strong>。
+提交方自评估用的正是 <code>-O2</code>，自报 94.65 cpb。<strong>它自报的数字里有一多半是编译配置问题。</strong></p>
+<hr />
+<h2>8. 实现完整性问题（实测中暴露的）</h2>
+<table>
+<thead>
+<tr>
+<th>条目</th>
+<th>现象</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Garnet <code>opt-asm-512_{512,640,768,896}</code></td>
+<td>KAT 3624/4104</td>
+<td>汇编缺一条 <code>inc rcx</code>，填充字节丢失；补回后四者全部恢复 4104/4104，性能差异 &lt; 0.5%</td>
+</tr>
+<tr>
+<td>Laurus / Litchi <code>opt</code></td>
+<td>KAT 520/4104</td>
+<td>优化核心的 <code>inlen</code> 单位是字节，参考实现同名函数是比特，非字节对齐消息全部失败；排名因此取 <code>ref</code></td>
+</tr>
+<tr>
+<td>uHash <code>opt</code></td>
+<td>Linux 无法直接编译</td>
+<td>无条件 <code>#include &lt;windows.h&gt;</code>、<code>#pragma intrinsic</code>、非 Windows 分支误用 C++ <code>nullptr</code>；改 3 处加 3 个 shim 后通过全部 4104 条</td>
+</tr>
+<tr>
+<td>WChain 全部变体</td>
+<td>链接失败</td>
+<td><code>wchain_c.c</code> 第 1058 行含无守卫的 <code>main()</code>；剥离后全部通过，<code>ref</code> 复核 4104/4104</td>
+</tr>
+<tr>
+<td>XRH-1 / XRH-2 <code>opt-prebuilt-asm</code></td>
+<td>无法加载</td>
+<td>包内预生成 <code>.s</code> 无构建说明，链接后不导出可用符号</td>
+</tr>
+<tr>
+<td>Neulaser</td>
+<td>无 KAT 向量</td>
+<td>提交包内没有 <code>KAT_2_12</code>，<strong>正确性无门槛可校验</strong></td>
+</tr>
+<tr>
+<td>Eijen AVX-512</td>
+<td>不存在</td>
+<td>文档报告了 AVX-512 数据，提交包内 <code>_mm512</code> 出现 0 次</td>
+</tr>
+<tr>
+<td>ZC-1536</td>
+<td>自报 2.946 cpb 无法复现</td>
+<td>纯 C 6.72 / 接入构建的 AVX2 <code>.c</code> 9.25 / 未接入构建的 AVX2 <code>.S</code> 6.09，三者都复现不了；<code>.c</code> 只向量化了 χ，θ/ρ 仍是标量</td>
+</tr>
+<tr>
+<td>Garnet 自报 2.83 cpb</td>
+<td>实测最优 14.73</td>
+<td>参考 C 全走 T 表、无一条 <code>aesenc</code>；只有 512 族手写汇编用了 AES 指令</td>
+</tr>
+<tr>
+<td>Pavelor / Wish</td>
+<td>无无密码指令的优化实现</td>
+<td>见 §2</td>
+</tr>
+</tbody>
+</table>
+<p>这些是<strong>提交完整性</strong>问题，不是设计问题。至少 6 个候选的名次被"没写向量化代码"拖累
+（XRH-1/2、Neulaser、Laurus、Litchi、QILIN），3 个的自报数字来自包里不存在或未接入构建的代码
+（Garnet、ZC-1536、Eijen）。</p>
+<hr />
+<h2>9. 局限</h2>
+<ol>
+<li>主口径的"禁用密码指令"是编译期开关加运行期能力屏蔽，不是在真实缺少这些指令的 CPU 上实测；
+   对通用 SIMD（AVX2 / AVX-512）的可用性假设仍然成立。</li>
+<li>各算法取固定的一份实现（多为提交方的优化实现），不等于该算法的最优变体；
+   全变体明细见 §7。</li>
+<li>只测 512 位摘要、单消息、长消息稳态。短消息见 <code>cpb@32B</code> 列——差异很大，
+   AXIS 在 32 B 上是 725.5 cpb（一次 32 字节哈希约 2.3 万周期）、CHAMP 1141.6，
+   而 CHIME 只有 9.9——完整的短消息排名见 §4。多消息批处理未评估。</li>
+<li>未做 ARM 平台测量。Wish 的 ARM 实现同样依赖 AES 扩展。</li>
+<li>Zen4 数据在两套独立的测试环境下复现，
+   32 项 cpb 比值中位 <strong>1.0003</strong>；云端数据不具备这种复现性，见 §7 的警示。</li>
+<li>安全性与硬件不在本文范围。</li>
+</ol>
+</article>
+</main>
+</body>
+</html>
