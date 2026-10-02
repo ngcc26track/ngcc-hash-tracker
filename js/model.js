@@ -12,6 +12,9 @@
   M.lang = store.get('ngcc.lang', null) || ((navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en');
   M.tx = (zh, en) => (M.lang === 'en' && en) ? en : zh;
   M.esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  /* 界面文字中的 **重点** 渲染为加粗（先转义，只认这一种标记） */
+  M.rich = s => M.esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  M.plain = s => String(s ?? '').replace(/\*\*/g, '');
 
   /* ---------- 设计图谱（中文与英文两份，结构相同） ---------- */
   function atlasOf(cards, specs, noLat) {
@@ -156,7 +159,27 @@
   M.vfName = k => ((M.DEF().verify || {})[k] || {}).name || k;
   M.kindName = k => ((M.DEF().kinds || {})[k] || {}).name || k;
   M.iName = k => ((M.DEF().impl_levels || {})[k] || {}).name || k;
-  M.affShort = a => { const u = M.units(a); return u.length ? u[0].replace(/（.*$/, '') + (u.length > 1 ? (M.lang === 'en' ? ` +${u.length - 1}` : ` 等 ${u.length} 家`) : '') : ''; };
+  /* 候选表中文界面下第一家单位的中文名（只用于表格简写；卡片里保留原文） */
+  const UNIT_ZH = {
+    'Guilin University of Electronic Technology': '桂林电子科技大学', 'Institute of Information Engineering, Chinese Academy of Sciences': '中国科学院信息工程研究所',
+    'CETC Cyberspace Security Technology Co., Ltd.': '中电科网络安全科技股份有限公司', 'East China Normal University': '华东师范大学',
+    'Xiamen University': '厦门大学', 'Shandong University': '山东大学', 'Tsinghua University': '清华大学', 'Shanghai Jiao Tong University': '上海交通大学',
+    'Hefei National Laboratory': '合肥国家实验室', 'Nanyang Technological University, Singapore': '新加坡南洋理工大学', 'Nanyang Technological University': '新加坡南洋理工大学',
+    'Academy of Mathematics and Systems Science, Chinese Academy of Sciences': '中国科学院数学与系统科学研究院', 'South China Normal University': '华南师范大学',
+    'Zhongguancun Laboratory': '中关村实验室', 'Beijing Institute of Technology': '北京理工大学', 'Institute of Software, Chinese Academy of Sciences': '中国科学院软件研究所',
+    'University of Chinese Academy of Sciences': '中国科学院大学'
+  };
+  /* 候选表里的单位简写：只显示第一家，去掉“School of …, ”这类院系前缀；一条里用“/”或“;”并列的按多家计 */
+  M.affShort = a => {
+    const parts = M.units(a).flatMap(u => u.split(/\s+\/\s+|;\s*|；/)).map(x => x.trim()).filter(Boolean);
+    if (!parts.length) return '';
+    let f = parts[0];
+    const zhIn = f.match(/[（(]([^（）()]*[\u4e00-\u9fff][^（）()]*)[）)]/);   // 英文名后括注的中文名
+    if (M.lang === 'zh' && zhIn) f = zhIn[1];
+    f = f.replace(/\s*[（(][^（）()]*[）)]\s*$/, '').replace(/（.*$/, '').replace(/^(School|Department|Faculty|College) of [^,]+,\s*/, '').trim();
+    f = M.lang === 'zh' ? (UNIT_ZH[f] || f) : f.replace(/, Chinese Academy of Sciences$/, ', CAS');
+    return f + (parts.length > 1 ? (M.lang === 'en' ? ` +${parts.length - 1}` : ` 等 ${parts.length} 家`) : '');
+  };
   M.who = a => (a.authors || []).join(M.lang === 'en' ? ', ' : '、');   // 算法卡片列出全部设计者
   M.excerpt = (s, n) => { s = String(s || '').replace(/\n\s*\n+/g, '\n').trim(); return s.length > n ? s.slice(0, n).replace(/\s+\S*$/, '') + ' …' : s; };
   M.href = p => String(p).split('/').map(encodeURIComponent).join('/');

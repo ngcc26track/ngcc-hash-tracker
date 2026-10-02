@@ -2,6 +2,8 @@
 (function () {
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+  /* 基线按名称取颜色与线型（颜色在 CSS 中定义，深浅色各一套；线型作为不依赖颜色的第二编码） */
+  const blc = n => 'bl-' + String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
   function domain(vals) {
     const lo = Math.min(...vals) * 0.85, hi = Math.max(...vals) * 1.05;
     const nice = (v, up) => { const e = Math.floor(Math.log10(v)); const ms = up ? [1, 2, 5, 10] : [10, 5, 2, 1];
@@ -17,7 +19,7 @@
 
   /* rows: [{id,name,value,sub}] 已排序；baselines: [{name,value}] */
   function bars(rows, opts = {}) {
-    const W = 900, L = 112, R = 70, rowH = 22, barH = 12;
+    const W = Math.max(640, Math.round(opts.width || 900)), L = 112, R = 90, rowH = 22, barH = 12;
     const base = (opts.baselines || []).filter(b => b.value != null);
     const vals = rows.map(r => r.value).concat(base.map(b => b.value));
     const dom = domain(vals);
@@ -25,11 +27,11 @@
     // 基线标签贪心分行，避免重叠
     const placed = [], rowsEnd = [];
     base.slice().sort((p, q) => p.value - q.value).forEach(b => {
-      const text = `${b.name} ${fmt(b.value)}`, w = text.length * 6.6 + 6, bx = x(b.value);
-      let r = 0; while (rowsEnd[r] != null && rowsEnd[r] > bx - w / 2 - 4) r++;
-      rowsEnd[r] = bx + w / 2; placed.push({ text, bx, r });
+      const text = `${b.name} ${fmt(b.value)}`, w = text.length * 6.8 + 22, bx = x(b.value);
+      let r = 0; while (rowsEnd[r] != null && rowsEnd[r] > bx - w / 2 - 6) r++;
+      rowsEnd[r] = bx + w / 2; placed.push({ text, bx, r, w, cls: blc(b.name) });
     });
-    const top = base.length ? 26 + rowsEnd.length * 16 : 24;
+    const top = base.length ? 28 + rowsEnd.length * 18 : 24;
     const H = top + rows.length * rowH + 34;
     const hl = opts.highlight || null;
     let s = `<svg class="bar-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label || '')}">`;
@@ -39,18 +41,21 @@
       s += `<text class="tick" x="${x(t)}" y="${H - 12}" text-anchor="middle">${t >= 1 ? t : t.toString()}</text>`;
     });
     // 基线：标签分两行错开
-    placed.forEach(({ text, bx, r }) => {
-      const ly = 16 + r * 16;
-      s += `<line class="baseline" x1="${bx}" x2="${bx}" y1="${ly + 4}" y2="${H - 28}"/>`;
-      s += `<text class="base-label" x="${bx}" y="${ly}" text-anchor="middle">${esc(text)}</text>`;
+    placed.forEach(({ text, bx, r, w, cls }) => {
+      const ly = 16 + r * 18, lx = bx - w / 2;
+      s += `<g class="bl ${cls}"><line class="baseline" x1="${bx}" x2="${bx}" y1="${ly + 5}" y2="${H - 28}"/>`;
+      s += `<line class="bl-key" x1="${lx}" x2="${lx + 14}" y1="${ly - 4}" y2="${ly - 4}"/>`;
+      s += `<text class="base-label" x="${lx + 19}" y="${ly}">${esc(text)}</text></g>`;
     });
     rows.forEach((r, i) => {
       const y = top + i * rowH, w = Math.max(2, x(r.value) - L);
       const on = !hl || hl === r.id;
-      s += `<g class="bar-row${on ? '' : ' dim'}${hl === r.id ? ' hl' : ''}" data-id="${esc(r.id)}" data-tip="${esc(r.tip || '')}" tabindex="0">`;
+      s += `<g class="bar-row${on ? '' : ' dim'}${hl === r.id ? ' hl' : ''}${r.fk ? ' fk-' + esc(r.fk) : ''}" data-id="${esc(r.id)}" data-tip="${esc(r.tip || '')}" tabindex="0">`;
       s += `<rect class="hit" x="0" y="${y}" width="${W}" height="${rowH}"/>`;
       s += `<text class="bar-name" x="${L - 8}" y="${y + rowH / 2 + 4}" text-anchor="end">${esc(r.name)}</text>`;
       s += `<path class="bar" d="M${L} ${y + (rowH - barH) / 2} h${w - 4} a4 4 0 0 1 4 4 v${barH - 8} a4 4 0 0 1 -4 4 h-${w - 4} z"/>`;
+      const vt = fmt(r.value) + (r.flag ? (/^（/.test(r.flag) ? '' : ' ') + r.flag : '');
+      s += `<rect class="val-bg" x="${L + w + 3}" y="${y + 4}" width="${[...vt].reduce((n, c) => n + (c.charCodeAt(0) > 0x2e80 ? 11.5 : 6.6), 6)}" height="${rowH - 8}" rx="3"/>`;
       s += `<text class="bar-val" x="${L + w + 6}" y="${y + rowH / 2 + 4}">${fmt(r.value)}${r.flag ? (/^（/.test(r.flag) ? '' : ' ') + esc(r.flag) : ''}</text>`;
       s += '</g>';
     });
@@ -71,7 +76,7 @@
       let r = 0; while (r < 2 && ends[r] != null && ends[r] > bx - w / 2) r++;
       ends[r] = bx + w / 2;
       const y = rowsY[r];
-      s += `<line class="baseline" x1="${bx}" x2="${bx}" y1="${y < AY ? y + 3 : AY}" y2="${y < AY ? AY + 6 : y - 10}"/><text class="base-label" x="${bx}" y="${y}" text-anchor="middle">${esc(b.name)}</text>`;
+      s += `<g class="bl ${blc(b.name)}"><line class="baseline" x1="${bx}" x2="${bx}" y1="${y < AY ? y + 3 : AY}" y2="${y < AY ? AY + 6 : y - 10}"/><text class="base-label" x="${bx}" y="${y}" text-anchor="middle">${esc(b.name)}</text></g>`;
     });
     s += `<circle class="mark" cx="${x(value)}" cy="${AY}" r="6"/></svg>`;
     return s;

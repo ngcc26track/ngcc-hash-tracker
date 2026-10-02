@@ -7,7 +7,7 @@
   const B = M.PERF.base, BN = ['SHA-512', 'SHA-256', 'SM3', 'SHA3-512'];
   const BASES = key => (key === 'zen4' || key === 's32') ? BN.map(n => ({ name: n, value: M.base(n, key) })) : [];
   /* 密码指令开关：各页面共用一个状态 */
-  const isaSwitch = (withNote) => { const x = T().perf.isa; return `<div class="isa-box"><button type="button" class="isa-switch" role="switch" aria-checked="${M.isa}" data-isa><span class="track"><i></i></span><span>${esc(x.label)}<small>${esc(x.hint)}</small></span></button>${withNote ? `<p class="isa-note">${esc(x.note(M.isa))}</p>` : ''}</div>`; };
+  const isaSwitch = (withNote) => { const x = T().perf.isa; return `<div class="isa-box"><button type="button" class="isa-switch" role="switch" aria-checked="${M.isa}" data-isa><span class="track"><i></i></span><span>${esc(x.label)}<small>${esc(x.hint)}</small></span></button>${withNote ? `<p class="isa-note">${M.rich(x.note(M.isa))}</p>` : ''}</div>`; };
   const condName = k => `${T().perf.conds[k]} · ${T().perf.isa[M.isa ? 'on' : 'off']}`;
   const flagOf = (a, k) => { const f = M.pflag(a, k); return f ? T().perf.flag[f] : ''; };
   const FS = f => f ? (M.lang === 'en' ? ' ' : '') + f : '';   // 中文标注是全角括号，不加空格
@@ -79,10 +79,10 @@
       const xs = M.algs.filter(a => a.category === c);
       return xs.length ? `<div class="route-row"><h3>${esc(catName(c))}<span>${xs.length}</span></h3><div>${xs.map(a => `<a class="route-chip ana-${a.ana}" href="#alg/${a.id}"><b>${esc(a.name)}</b><span>${esc(a.at ? a.at.subtitle : '')}</span></a>`).join('')}</div></div>` : '';
     }).join('');
-    return `<section class="hero"><h1>${esc(t.site)}</h1><p class="lede">${esc(t.lede)}</p></section>
-      <div class="note-bar">ⓘ ${esc(t.disclaimer)}</div>
-      <section class="kpis">${kpis.map(([k, v, s, go]) => `<a class="kpi" href="#${go}"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></a>`).join('')}</section>
-      <section class="panel"><div class="panel-h"><h2>${esc(t.matrix.title)}</h2>${isaSwitch(false)}</div><p class="note">${esc(t.matrix.note(M.isa))}</p>${matrix}</section>
+    return `<section class="hero"><h1>${esc(t.site)}</h1><p class="lede">${M.rich(t.lede)}</p></section>
+      <div class="note-bar"><span class="nb-i">ⓘ</span><span>${M.rich(t.disclaimer)}</span></div>
+      <section class="kpis">${kpis.map(([k, v, s, go]) => `<a class="kpi kpi-${go.split('/').pop()}" href="#${go}"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></a>`).join('')}</section>
+      <section class="panel"><div class="panel-h"><h2>${esc(t.matrix.title)}</h2>${isaSwitch(false)}</div><p class="note">${M.rich(t.matrix.note(M.isa))}</p>${matrix}</section>
       <div class="grid2">
         <section class="panel"><div class="panel-h"><h2>${esc(t.updates)}</h2></div>
           <ul class="upd">${ups.slice(0, 8).map(({ a, v }) => `<li><span class="d">${esc(v.date || '')}</span><span>${algLink(a, a.name + ' ' + v.v)} · ${esc(v.wd ? v.label : M.vLabel(a, v))}</span></li>`).join('')}</ul></section>
@@ -119,7 +119,7 @@
     $('#shown').textContent = T().cand.shown(xs.length, M.algs.length);
     $('#no-rows').hidden = xs.length > 0;
     $('#rows').innerHTML = xs.map(a => `<tr data-go="alg/${a.id}" tabindex="0"${a.withdrawn ? ' class="wd"' : ''}>
-      <td class="alg"><a href="#alg/${a.id}">${a.withdrawn ? `<s class="wdn">${esc(a.name)}</s>` : esc(a.name)}</a>${wdTag(a)}<span class="sub">${esc(M.affShort(a))}</span></td>
+      <td class="alg"><a href="#alg/${a.id}">${a.withdrawn ? `<s class="wdn">${esc(a.name)}</s>` : esc(a.name)}</a>${wdTag(a)}<span class="sub aff" title="${esc(M.units(a).join(M.lang === 'en' ? '; ' : '；'))}">${esc(M.affShort(a))}</span></td>
       <td>${anaPill(a)}</td><td>${implCell(a)}</td><td>${verCell(a)}</td><td>${fPill(a)}</td>
       <td><span class="route">${esc(catName(a.category))}</span><span class="sub">${esc(a.at ? a.at.subtitle : M.modeS(a))}</span></td>
       <td class="r num">${M.fmtCpb(M.pv(a, 'zen4'))}${rz.r[a.id] ? `<span class="sub">#${rz.r[a.id]}${esc(FS(flagOf(a, 'zen4')))}</span>` : ''}</td>
@@ -131,7 +131,7 @@
     const t = T(), id = a.id, rz = M.rank('zen4'), pz = M.pv(a, 'zen4'), F = full ? ' data-full' : '';
     const faster = pz ? ['SHA-512', 'SHA-256', 'SM3'].map(n => ({ n, r: M.base(n, 'zen4') / pz })) : [];
     return `<div class="glance">
-      <a class="g-card" href="#alg/${id}/security"${F}><span class="g-k">${esc(t.alg.glance.sec)}</span><div class="g-v">${anaPill(a)}${fPill(a)}</div><p>${esc(M.summary(a) || (a.thirdParty ? '' : t.alg.noFind.NA))}</p><span class="g-more">${esc(t.alg.more)} →</span></a>
+      <a class="g-card" href="#alg/${id}/security"${F}><span class="g-k">${esc(t.alg.glance.sec)}</span><div class="g-v">${anaPill(a)}${fPill(a)}</div><p class="g-sum">${esc(M.summary(a) || (a.thirdParty ? '' : t.alg.noFind.NA))}</p><span class="g-more">${esc(t.alg.more)} →</span></a>
       <a class="g-card" href="#alg/${id}/perf"${F}><span class="g-k">${esc(t.alg.glance.perf)}</span>${pz ? `<div class="g-v"><strong>${M.fmtCpb(pz)}</strong><span>cycles/byte · ${esc(condName('zen4'))}${esc(FS(flagOf(a, 'zen4')))}</span></div>
         <p>${esc(t.alg.rankOf(rz.r[id], rz.of))}${SE()}${faster.map(f => M.lang === 'en' ? `${f.r >= 1 ? f.r.toFixed(2) + '× faster' : (1 / f.r).toFixed(2) + '× slower'} than ${f.n}` : `${f.r >= 1 ? '快于' : '慢于'} ${f.n} ${(f.r >= 1 ? f.r : 1 / f.r).toFixed(2)} 倍`).join(M.lang === 'en' ? '; ' : '，')}</p>` : `<p>${esc(t.alg.perfNone)}</p>`}
         <p class="g-sub">Xeon ${esc((t.perf.conds.xeon.split('·')[1] || '').trim())}${CO()}${M.fmtCpb(M.pv(a, 'xeon'))} cycles/byte${esc(FS(flagOf(a, 'xeon')))}</p><span class="g-more">${esc(t.alg.more)} →</span></a>
@@ -206,7 +206,7 @@
     const list = fs.length ? `<ul class="findings">${fs.map(f => { const fx = f.fix || {}, s = M.fT(f); return `<li>
         <div class="f-h">${kindTag(f)}<span class="f-t">${esc(s.title)}</span>${f.kind === '提示' ? '' : `<span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}${fx.version ? ' · ' + esc(fx.version) : ''}</span>`}</div>
         ${s.detail ? `<p>${esc(s.detail)}</p>` : ''}${s.note ? `<p class="f-note"><b>${['claimed', 'verified', 'failed'].includes(M.st(f)) ? c.noteRev : c.noteResp}</b>${esc(s.note)}</p>` : ''}
-        <div class="f-src"><span>${c.src}${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}${ext(f)}${fx.msgs ? `<span>${c.resp}</span>${srcLinks(fx.msgs)}` : ''}${f.verify ? `<span class="vtag" title="${esc(c.mview)}">${c.verify}${CO()}${esc(M.vfName(f.verify))}</span>` : ''}</div></li>`; }).join('')}</ul>`
+        <div class="f-src"><span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}${ext(f)}${fx.msgs ? `<span><b>${c.resp}</b></span>${srcLinks(fx.msgs)}` : ''}${f.verify ? `<span class="vtag" title="${esc(c.mview)}">${c.verify}${CO()}${esc(M.vfName(f.verify))}</span>` : ''}</div></li>`; }).join('')}</ul>`
       : `<p class="muted">${a.ana === 'NA' ? c.noFind.NA : c.noFind.x}</p>`;
     const sec = a.at && a.at.analysis && a.at.analysis.security;
     // 设计者论证按中文标签挑出，再取当前语言同一位置的条目（中英文结构一致）
@@ -232,9 +232,9 @@
     const iss = a.findings.filter(f => f.kind === '实现');
     const pubIss = M.perfIssues().filter(x => x.zh.item.toLowerCase().includes(a.name.toLowerCase()));
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.perfDetail)}</h2><a href="#perf">${esc(t.nav.perf)} →</a></div>${isaSwitch(M.usesIsa(a, 'xeon'))}<div class="tiles">${tiles}</div>${ruler}
-        ${note ? `<p class="note">${esc(note)}</p>` : ''}</section>
+        ${note ? `<p class="note">${M.rich(note)}</p>` : ''}</section>
       ${imp ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implNotes)}</h2></div><p class="lead">${esc(imp.lead)}</p><div class="points">${imp.points.map(q => `<article><span class="kind">${esc(q.label)}</span><h3>${esc(q.title)}</h3><p>${esc(q.body)}${refLinks(a, q.refs)}</p></article>`).join('')}</div></section>` : ''}
-      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${esc(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? `<p>${esc(s.detail)}</p>` : ''}<div class="f-src"><span>${c.src}${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
+      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${esc(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? `<p>${esc(s.detail)}</p>` : ''}<div class="f-src"><span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
         ${pubIss.map(x => `<li><div class="f-h"><span class="lv lv-K">${M.lang === 'en' ? 'Benchmark' : '统一实测'}</span><span class="f-t">${esc(x.item)}${M.lang === 'en' ? ': ' : '：'}${esc(x.what)}</span></div>${/^见/.test(x.zh.verdict) ? '' : `<p>${esc(x.verdict)}</p>`}</li>`).join('')}</ul></section>` : ''}`;
   }
 
@@ -263,23 +263,23 @@
     if (cond === 'zen4Aes') { M.setIsa(true); ps.cond = 'zen4'; }   // 旧链接
     else if (cond && p.conds[cond]) ps.cond = cond;
     const take = M.lang === 'en' ? [
-      'With general-purpose instructions only, of the 34 candidates measured on Zen4 (Garnet is not included; see the note below the chart), 20 are faster than SM3, 23 faster than SHA3-512, 10 faster than SHA-256 and 2 faster than SHA-512.',
-      '32 of the 35 candidates use no crypto instructions at all, so their numbers are the same under both settings. The optimised implementations of Pavelor and Wish require hardware AES rounds; with crypto instructions allowed Pavelor is the fastest, 1.25 cycles/byte on long messages and 9.02 at 32 bytes.',
-      'Short messages reorder the field: the ratio of 32-byte to long-message cost ranges from 1.6 to 151.6 (median 4.5). AXIS drops from 6th to 31st and ZC-DMC from 5th to 25th, while Duet rises from 26th to 11th and MasterCube from 19th to 10th.',
-      'Changing the compiler (gcc 13.3 → 11.4) moves the ranking more than changing the CPU; the same source differs by up to 2.6×.'
+      'With general-purpose instructions only, of the 34 candidates measured on Zen4 (Garnet is not included; see the note below the chart), **20 are faster than SM3**, **23 faster than SHA3-512**, **10 faster than SHA-256** and **2 faster than SHA-512**.',
+      '**32 of the 35 candidates use no crypto instructions** at all, so their numbers are the same under both settings. The optimised implementations of Pavelor and Wish require hardware AES rounds; with crypto instructions allowed **Pavelor is the fastest**, 1.25 cycles/byte on long messages and 9.02 at 32 bytes.',
+      '**Short messages reorder the field**: the ratio of 32-byte to long-message cost ranges from 1.6 to 151.6 (median 4.5). AXIS drops from 6th to 31st and ZC-DMC from 5th to 25th, while Duet rises from 26th to 11th and MasterCube from 19th to 10th.',
+      '**Changing the compiler** (gcc 13.3 → 11.4) **moves the ranking more than changing the CPU**; the same source differs by up to 2.6×.'
     ] : [
-      '只用通用指令时，Zen4 上可测的 34 个候选（Garnet 未纳入，原因见图表下方说明）中 20 个快于 SM3，23 个快于 SHA3-512，10 个快于 SHA-256，2 个快于 SHA-512。',
-      '35 个候选中 32 个不依赖任何密码指令，两种口径下数字相同。Pavelor 与 Wish 的优化实现必须使用硬件 AES 轮；允许密码指令时 Pavelor 长消息 1.25、32 字节 9.02 cycles/byte，均为最快。',
-      '短消息上格局不同：32 字节与长消息的成本比为 1.6 到 151.6（中位 4.5）。AXIS 从第 6 名落到第 31 名，ZC-DMC 从第 5 名落到第 25 名；Duet 从第 26 名升到第 11 名，MasterCube 从第 19 名升到第 10 名。',
-      '换编译器（gcc 13.3 → 11.4）对名次的影响大于换 CPU，同一份源码最多相差 2.6 倍。'
+      '只用通用指令时，Zen4 上可测的 34 个候选（Garnet 未纳入，原因见图表下方说明）中 **20 个快于 SM3**，**23 个快于 SHA3-512**，**10 个快于 SHA-256**，**2 个快于 SHA-512**。',
+      '**35 个候选中 32 个不依赖任何密码指令**，两种口径下数字相同。Pavelor 与 Wish 的优化实现必须使用硬件 AES 轮；允许密码指令时 Pavelor 长消息 1.25、32 字节 9.02 cycles/byte，**均为最快**。',
+      '**短消息上格局不同**：32 字节与长消息的成本比为 1.6 到 151.6（中位 4.5）。AXIS 从第 6 名落到第 31 名，ZC-DMC 从第 5 名落到第 25 名；Duet 从第 26 名升到第 11 名，MasterCube 从第 19 名升到第 10 名。',
+      '**换编译器**（gcc 13.3 → 11.4）**对名次的影响大于换 CPU**，同一份源码最多相差 2.6 倍。'
     ];
     const opts = M.algs.slice().sort((x, y) => x.name.localeCompare(y.name, 'en', { sensitivity: 'base' }));
     const tbl = M.algs.slice().sort((x, y) => (M.pv(x, ps.cond) ?? 1e9) - (M.pv(y, ps.cond) ?? 1e9));
-    return `<section class="hero"><h1>${esc(p.title)}</h1><p class="lede">${esc(p.lede)}</p></section>
-      <section class="panel"><div class="panel-h"><h2>${esc(p.takeaways)}</h2></div><ol class="takeaways">${take.map(x => `<li>${esc(x)}</li>`).join('')}</ol></section>
+    return `<section class="hero"><h1>${esc(p.title)}</h1><p class="lede">${M.rich(p.lede)}</p></section>
+      <section class="panel"><div class="panel-h"><h2>${esc(p.takeaways)}</h2></div><ol class="takeaways">${take.map(x => `<li>${M.rich(x)}</li>`).join('')}</ol></section>
       <section class="panel">${isaSwitch(true)}<div class="controls perf-controls"><div class="seg" id="f-cond">${Object.entries(p.conds).map(([k, l]) => `<button type="button" data-k="${k}" aria-pressed="${ps.cond === k}">${esc(l)}</button>`).join('')}</div>
         <select id="f-hl" aria-label="${esc(p.search)}"><option value="">${esc(p.search)}…</option>${opts.map(a => `<option value="${a.id}" ${ps.hl === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
-        <p class="note">${esc(p.condNote[ps.cond](M.isa))}${ps.cond === 'xeon' ? '' : (M.lang === 'en' ? ' ' : '') + esc(p.noZen4)}</p><div id="chart" class="chart"></div></section>
+        <p class="note">${M.rich(p.condNote[ps.cond](M.isa))}${ps.cond === 'xeon' ? '' : (M.lang === 'en' ? ' ' : '') + M.rich(p.noZen4)}</p><div id="chart" class="chart"></div></section>
       <section class="panel"><details><summary>${esc(p.table)} · ${esc(p.isa[M.isa ? 'on' : 'off'])}</summary><div class="tbl-wrap"><table class="perf-table"><thead><tr>${p.cols.map((h, i) => `<th${i ? ' class="r"' : ''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>
         ${tbl.map(a => `<tr><td>${algLink(a)}${flagOf(a, 'zen4') ? `<span class="sub">${esc(flagOf(a, 'zen4'))}</span>` : ''}</td>${['zen4', 's32', 's64', 's128', 'mbps', 'xeon'].map(k => `<td class="r num">${k === 'mbps' ? (M.pv(a, 'mbps') ?? '—') : M.fmtCpb(M.pv(a, k))}</td>`).join('')}</tr>`).join('')}
         ${BN.map(n => `<tr class="base-row"><td>${esc(n)}</td>${['zen4', 's32', 's64', 's128'].map(k => `<td class="r num">${M.fmtCpb(M.base(n, k))}</td>`).join('')}<td class="r num">${M.base(n, 'mbps') ?? '—'}</td><td class="r">—</td></tr>`).join('')}
@@ -290,10 +290,10 @@
   function drawPerf() {
     const t = T(), k = ps.cond;
     const rows = M.algs.filter(a => M.pv(a, k) != null).sort((x, y) => M.pv(x, k) - M.pv(y, k)).map((a, i, arr) => ({
-      id: a.id, name: a.name, value: M.pv(a, k), flag: flagOf(a, k),
+      id: a.id, name: a.name, value: M.pv(a, k), flag: flagOf(a, k), fk: M.pflag(a, k),
       tip: `${a.name}\n${M.fmtCpb(M.pv(a, k))} cycles/byte · ${t.alg.rankOf(i + 1, arr.length)}${k === 'zen4' && M.pv(a, 'mbps') ? `\n${M.pv(a, 'mbps')} MB/s` : ''}`
     }));
-    $('#chart').innerHTML = PerfChart.bars(rows, { baselines: BASES(k), highlight: ps.hl || null, axis: t.perf.axis, label: condName(k) });
+    $('#chart').innerHTML = PerfChart.bars(rows, { width: $('#chart').clientWidth, baselines: BASES(k), highlight: ps.hl || null, axis: t.perf.axis, label: condName(k) });
     PerfChart.bindTips($('#chart'));
   }
 
@@ -340,15 +340,15 @@
     const t = T(), d = M.DEF(), ab = t.about;
     const dl = (obj, fmt) => `<dl class="defs">${Object.entries(obj || {}).map(([k, v]) => `<dt>${fmt(k, v)}</dt><dd>${esc(v.desc)}</dd>`).join('')}</dl>`;
     const method = M.lang === 'en' ? [
-      'Forum content is fetched from the CryptHash archive on list.niccs.org.cn; findings, fix states and verification are curated by the maintainers.',
-      'Design content (constructions, state layouts, round functions) is drawn from the designers\' documents and updates, cited per algorithm.',
-      'Software benchmark: ' + M.perfMeta('zen4') + '. Cloud Xeon numbers: ' + M.perfMeta('xeon') + '.'
+      '**Forum content** is fetched from the CryptHash archive on list.niccs.org.cn; findings, fix states and verification are curated by the maintainers.',
+      '**Design content** (constructions, state layouts, round functions) is drawn from the designers\' documents and updates, cited per algorithm.',
+      '**Software measurements**: ' + M.perfMeta('zen4') + '. **Cloud Xeon numbers**: ' + M.perfMeta('xeon') + '.'
     ] : [
-      '论坛内容抓取自 list.niccs.org.cn 的 CryptHash 存档；发现清单、修补状态与核验结果由维护方整理。',
-      '设计内容（外层构造、状态布局、轮函数）依据设计者文档与作者更新整理，各算法页列出来源。',
-      '软件实测：' + M.PERF.meta.zen4 + '。云端 Xeon 数字：' + M.PERF.meta.xeon + '。'
+      '**论坛内容**抓取自 list.niccs.org.cn 的 CryptHash 存档；发现清单、修补状态与核验结果由维护方整理。',
+      '**设计内容**（外层构造、状态布局、轮函数）依据设计者文档与作者更新整理，各算法页列出来源。',
+      '**软件实测**：' + M.PERF.meta.zen4 + '。**云端 Xeon 数字**：' + M.PERF.meta.xeon + '。'
     ];
-    return `<section class="panel doc"><h2>${esc(ab.title)}</h2><p>${esc(t.disclaimer)}</p><h3>${esc(ab.method)}</h3><ul>${method.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    return `<section class="panel doc"><h2>${esc(ab.title)}</h2><p>${M.rich(t.disclaimer)}</p><h3>${esc(ab.method)}</h3><ul>${method.map(x => `<li>${M.rich(x)}</li>`).join('')}</ul>
       <h3>${esc(ab.overall)}</h3><p>${esc(d.overall || '')}</p>
       <h3>${esc(ab.kinds)}</h3>${dl(d.kinds, (k, v) => `<span class="lv lv-K">${esc(v.name)}</span>`)}
       <h3>${esc(ab.levels)}</h3>${dl(d.levels, (k, v) => `<span class="lv lv-${k}"><b>${k}</b>${esc(v.name)}</span>`)}
@@ -451,6 +451,7 @@
     if (R.base.startsWith('compare/') && renderedBase && renderedBase.startsWith('compare')) { syncDrawer(); return; }
     if (R.base !== renderedBase) { render(); window.scrollTo(0, 0); } else syncDrawer();
   }
+  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (route().r === 'perf' && $('#chart')) drawPerf(); }, 150); });
   window.addEventListener('hashchange', sync);
   window.addEventListener('popstate', sync);
   document.addEventListener('keydown', e => {

@@ -1,8 +1,8 @@
 # NGCC Hash Round 1
 
 Unofficial, bilingual (中文 / English) site for the 35 Round 1 candidates of the NGCC call for cryptographic hash
-algorithms: public forum findings, submitter responses and revisions, the design of each candidate, and a unified
-software benchmark.
+algorithms: public forum findings, submitter responses and revisions, the design of each candidate, and performance
+tests under uniform conditions (currently software measurements).
 
 - Sources: the CryptHash public comment forum (list.niccs.org.cn), the official submission packages (niccs.org.cn)
   and the designers' documents. Forum posts and official materials are authoritative.
