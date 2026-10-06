@@ -80,7 +80,7 @@
     a.sec = a.findings.filter(f => (f.kind || '安全') === '安全' && f.level && f.verify !== 'cite');
     const worst = fs => fs.reduce((w, f) => (RANK[f.level] || 0) > (RANK[w] || 0) ? f.level : w, null);
     a.openLv = worst(a.sec.filter(f => !['claimed', 'verified'].includes(st(f))));
-    a.claimLv = worst(a.sec.filter(f => st(f) === 'claimed'));
+    a.claimLv = worst(a.sec.filter(f => ['claimed', 'verified'].includes(st(f))));
     a.thirdParty = a.nC > 0;
     a.ana = a.openLv || (a.claimLv ? 'P' : (a.findings.length || a.thirdParty ? 'OK' : 'NA'));
     const IRANK = { I1: 3, I2: 2, I3: 1 };
