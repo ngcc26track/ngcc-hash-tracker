@@ -13,7 +13,7 @@
   M.tx = (zh, en) => (M.lang === 'en' && en) ? en : zh;
   M.esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   /* 界面文字中的 **重点** 渲染为加粗（先转义，只认这一种标记） */
-  M.rich = s => M.esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  M.rich = s => M.esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
   M.plain = s => String(s ?? '').replace(/\*\*/g, '');
 
   /* ---------- 设计图谱（中文与英文两份，结构相同） ---------- */

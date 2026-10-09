@@ -56,10 +56,13 @@ main.wrap{padding-top:22px;padding-bottom:40px;min-height:70vh}
 
 /* 通用 */
 .hero h1{margin:6px 0 8px;font:700 30px/1.25 var(--serif);letter-spacing:-.01em}
-.lede{max-width:860px;margin:0 0 14px;color:var(--ink-2);font-size:15px;line-height:1.8}
+.lede{max-width:860px;margin:0 0 14px;color:var(--ink-2);font-size:15px;line-height:1.8;text-wrap:pretty}
 .note-bar{display:flex;gap:8px;margin:0 0 16px;padding:10px 14px;border-radius:8px;background:var(--accent-soft);border-left:3px solid var(--accent);color:var(--ink-2);font-size:12.5px;line-height:1.65}
 .note-bar .nb-i{color:var(--accent);font-weight:700}
 .note-bar strong,.note strong,.isa-note strong,.takeaways strong,.doc strong{color:var(--ink);font-weight:650}
+.hero-links{display:flex;flex-wrap:wrap;gap:6px 18px;margin:-4px 0 14px;font-size:13.5px}
+.hero-links a{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
+.hero-links a:hover{border-bottom-color:var(--accent)}
 .lede strong{color:var(--ink);font-weight:650}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px;min-width:0}
 .panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}

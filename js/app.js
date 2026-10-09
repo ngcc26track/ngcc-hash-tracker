@@ -79,7 +79,10 @@
       const xs = M.algs.filter(a => a.category === c);
       return xs.length ? `<div class="route-row"><h3>${esc(catName(c))}<span>${xs.length}</span></h3><div>${xs.map(a => `<a class="route-chip ana-${a.ana}" href="#alg/${a.id}"><b>${esc(a.name)}</b><span>${esc(a.at ? a.at.subtitle : '')}</span></a>`).join('')}</div></div>` : '';
     }).join('');
-    return `<section class="hero"><h1>${esc(t.site)}</h1><p class="lede">${M.rich(t.lede)}</p></section>
+    const hl = M.lang === 'en'
+      ? [['Official announcement (Round 1 list)', 'https://www.niccs.org.cn/symmbzyjy/tzgg/pc/content/2100870458917867520/content_2100870458917867520.html'], ['Candidate downloads', 'https://www.niccs.org.cn/niccs/Round1Submissions4/pc/list.html'], ['Public comment forum', 'https://list.niccs.org.cn/archives/list/crypthashforum@list.niccs.org.cn/']]
+      : [['官方通知（第一轮候选名单）', 'https://www.niccs.org.cn/symmbzyjy/tzgg/pc/content/2100870458917867520/content_2100870458917867520.html'], ['候选算法下载', 'https://www.niccs.org.cn/niccs/Round1Submissions4/pc/list.html'], ['公开评论论坛', 'https://list.niccs.org.cn/archives/list/crypthashforum@list.niccs.org.cn/']];
+    return `<section class="hero"><h1>${esc(t.site)}</h1><p class="lede">${M.rich(t.lede)}</p><p class="hero-links">${hl.map(([k, u]) => `<a href="${u}" target="_blank" rel="noopener">${esc(k)} ↗</a>`).join('')}</p></section>
       <div class="note-bar"><span class="nb-i">ⓘ</span><span>${M.rich(t.disclaimer)}</span></div>
       <section class="kpis">${kpis.map(([k, v, s, go]) => `<a class="kpi kpi-${go.split('/').pop()}" href="#${go}"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="s">${esc(s)}</span></a>`).join('')}</section>
       <section class="panel"><div class="panel-h"><h2>${esc(t.matrix.title)}</h2>${isaSwitch(false)}</div><p class="note">${M.rich(t.matrix.note(M.isa))}</p>${matrix}</section>
