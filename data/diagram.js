@@ -144,6 +144,12 @@
     for (var i = 0; i < String(t).length; i++) n += String(t).charCodeAt(i) > 0x2e80 ? 1 : 0.56;
     return n * 12;
   }
+  /* 等宽字体（d-chip-t）的保守宽度估计：ASCII 约 0.62em，数学符号等可能回退到比例字体，按约 1em 计 */
+  function monoWidth(t, px) {
+    var n = 0, s = String(t);
+    for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); n += c < 0x80 ? 0.62 : (c === 0xb7 ? 0.62 : 1.0); }
+    return n * px;
+  }
   function wrap(t, maxPx) {
     var out = [], cur = '';
     t = String(t || '');
@@ -167,7 +173,7 @@
     var px = /d-op-sym/.test(cls) ? 22 : (/d-cellname|d-sub/.test(cls) ? 13 :
              (/d-op-cap|d-note|d-cap/.test(cls) ? 12 : (/d-op-f|d-chip-t|d-axis/.test(cls) ? 11 :
              (/d-cellop/.test(cls) ? 10 : 10.5))));
-    var w = textWidth(t) * px / 12;
+    var w = /d-chip-t/.test(cls) ? monoWidth(t, px) : textWidth(t) * px / 12;
     var adj = (maxW && w > maxW) ? ' textLength="' + maxW.toFixed(1) + '" lengthAdjust="spacingAndGlyphs"' : '';
     return '<text class="' + cls + '" x="' + x + '" y="' + y + '"' + (extra || '') + adj + '>' + esc(t) + '</text>';
   }
@@ -695,8 +701,8 @@
       var ls = wrap(String(t), CHIPMAX - 16);
       if (ls.length > 2) ls = [ls[0], ls.slice(1).join('')];
       var wd = 0;
-      ls.forEach(function (l) { wd = Math.max(wd, textWidth(l) * 11 / 12); });
-      return { lines: ls, w: Math.max(58, Math.min(CHIPMAX, wd + 18)) };
+      ls.forEach(function (l) { wd = Math.max(wd, monoWidth(l, 11)); });
+      return { lines: ls, w: Math.max(58, Math.min(CHIPMAX, wd + 24)) };
     });
     items.forEach(function (it) {
       if (cur.length && curW + GAP + it.w > w) { rows.push({ items: cur, w: curW }); cur = []; curW = 0; }
@@ -776,8 +782,8 @@
     b += ob.svg;
     b += '<path class="d-arrow faint" d="M' + (S.L.right() + 16) + ' ' + S.cy + ' H ' + (S.mid - ob.hw - 8) + '"/>';
     b += '<path class="d-arrow faint" d="M' + (S.mid + ob.hw + 8) + ' ' + S.cy + ' H ' + (S.R.x - 14) + '"/>';
-    var UNF = geo.unitName || 'lane';
-    b += caps(S, op.inCap || L('全部 ' + (geo.rows * geo.cols) + ' 个 ' + UNF + ' 各自独立', 'all ' + (geo.rows * geo.cols) + ' ' + plural(geo.rows * geo.cols, UNF) + ' are independent'), op.depNote || L('没有任何跨 ' + UNF + ' 的信息流动', 'no information flows between ' + plural(2, UNF)));
+    var UNF = geo.unitName || 'lane', SP = /^[\x00-\x7f]+$/.test(UNF) ? ' ' : '';   /* 中文单位名（如“道”）两侧不留空格 */
+    b += caps(S, op.inCap || L('全部 ' + (geo.rows * geo.cols) + ' 个' + SP + UNF + SP + '各自独立', 'all ' + (geo.rows * geo.cols) + ' ' + plural(geo.rows * geo.cols, UNF) + ' are independent'), op.depNote || L('没有任何跨' + SP + UNF + SP + '的信息流动', 'no information flows between ' + plural(2, UNF)));
     b += '<rect class="d-zone" x="34" y="' + sh.zoneY + '" width="' + (W - 68) + '" height="' + zh + '" rx="12"/>';
     b += '<text class="d-zone-t" x="52" y="' + (sh.zoneY + 22) + '">' + esc(op.innerTitle || L(UNF + '内部的结构', 'Structure inside each ' + UNF)) + '</text>';
     var body = (op.ladder ? feistelLadder(56, sh.zoneY + 34, W - 112, op.ladder) : stagesStrip(56, sh.zoneY + 36, W - 112, op.stages || []));
