@@ -135,9 +135,22 @@
   }
   // 未参与的格子也显示名字（淡色），避免"这页有名字那页没有"
   function bgName(geo, c, r) { return nameOf(geo, c, r) || ''; }
-  function panel(label, g) {
-    return '<rect class="d-frame" x="' + (g.x - 30) + '" y="' + (g.y - 30) + '" width="' + (g.w() + 48) + '" height="' + (g.h() + 60) + '" rx="12"/>' +
-      '<text class="d-panel-label" x="' + (g.x - 30) + '" y="' + (g.y - 40) + '">' + label + '</text>';
+  /* 行标（y 轴刻度）的估计宽度：与 axes() 的取字规则一致，留 12% 余量 */
+  function yTickW(geo, rows) {
+    var yt = geo && geo.yTicks, ys = (geo && geo.yLabel) || 'y', w = 0;
+    if (yt) yt.forEach(function (t) { w = Math.max(w, textWidth(t)); });
+    else if (String(ys).length > 3) w = Math.max(textWidth(String(rows - 1)), textWidth(ys));
+    else w = textWidth(ys + (rows - 1));
+    return w * 11 / 12 * 1.12;
+  }
+  /* 面板虚线框：行标画在框内，框边按行标宽度外扩（左面板向左、右面板向右） */
+  function panel(label, g, tickW, right) {
+    var padL = right ? 30 : Math.max(30, 9 + (tickW || 0) + 10);
+    var padR = right ? Math.max(18, 9 + (tickW || 0) + 10) : 18;
+    var fx = Math.max(4, g.x - padL), fr = Math.min(W - 4, g.x + g.w() + padR);
+    g.fx = fx;
+    return '<rect class="d-frame" x="' + fx + '" y="' + (g.y - 30) + '" width="' + (fr - fx) + '" height="' + (g.h() + 60) + '" rx="12"/>' +
+      '<text class="d-panel-label" x="' + fx + '" y="' + (g.y - 40) + '">' + label + '</text>';
   }
   function textWidth(t) {
     var n = 0;
@@ -248,9 +261,7 @@
     var L = new Grid({ x: 76, y: gy, rows: rows, cols: cols, cw: cw, ch: ch, gap: gap });
     // 右面板的行标画在它右侧，先给刻度留出净空
     var gut = 0;
-    (geo.yTicks || []).forEach(function (t) { gut = Math.max(gut, textWidth(t) * 11 / 12); });
-    if (!geo.yTicks) gut = textWidth('y' + (rows - 1)) * 11 / 12;
-    gut = Math.min(120, gut);
+    gut = Math.min(120, yTickW(geo, rows) + 10);
     var R = new Grid({ x: W - 30 - gut - (cols * cw + (cols - 1) * gap), y: gy, rows: rows, cols: cols, cw: cw, ch: ch, gap: gap });
     var bottom = gy + L.h();
     return { L: L, R: R, mid: (L.right() + R.x) / 2, cy: gy + L.h() / 2, bottom: bottom };
@@ -269,13 +280,13 @@
       H: H,
       head: '<rect class="d-bg" x="0" y="0" width="' + W + '" height="' + H + '"/>' +
         '<text class="d-title" x="34" y="36">' + esc(geo.title) + '</text>' + subSvg +
-        panel(IN_TITLE(), S.L) + panel(OUT_TITLE(), S.R) +
+        panel(IN_TITLE(), S.L, yTickW(geo, S.L.rows)) + panel(OUT_TITLE(), S.R, yTickW(geo, S.R.rows), true) +
         axes(S.L, geo.xLabel || 'x', geo.yLabel || 'y', geo) + axes(S.R, geo.xLabel || 'x', geo.yLabel || 'y', geo, 'right'),
       zoneY: S.bottom + 86
     };
   }
   function caps(S, l, r) {
-    var o = '', lx = S.L.x - 30, rx = S.R.x - 30;
+    var o = '', lx = S.L.fx != null ? S.L.fx : S.L.x - 30, rx = S.R.x - 30;
     // 英文通常更长：放不下两行时改成三行、行距略收，仍落在说明区之上（中文保持两行）
     function put(t, x, w) {
       var ls = wrap(t || '', w), three = LANG === 'en' && ls.length > 2;
@@ -1371,6 +1382,13 @@
   function xor(x, y, cls) {
     return '<circle class="c-xor ' + (cls || '') + '" cx="' + x + '" cy="' + y + '" r="11"/><text class="c-xor-t" x="' + x + '" y="' + (y + 4.5) + '">⊕</text>';
   }
+  /* 左侧轨道名后面的轨道线起点：名字较长（如“对齐窗口 S”）时让开，不压字 */
+  function railStart(x0, name) { return Math.min(x0 + 66, Math.max(x0, 54 + cTextW(name, 11.5) * 1.2)); }
+  /* 容量位宽说明：放不下一行时向下折成多行，不伸进第一个置换框 */
+  function capBitsSvg(t, x, y) {
+    if (!t) return '';
+    return wrapByWidth(t, 104, 10.5 * 1.12).map(function (q, k) { return '<text class="c-sl" x="' + x + '" y="' + (y + k * 13) + '">' + e(q) + '</text>'; }).join('');
+  }
   /* 底部说明条：按宽度折行，高度随行数增长 */
   function band(y, note) {
     var nl = wrapByWidth(note || '', W - 104, 11.5);
@@ -1411,11 +1429,11 @@
     b += '<text class="c-lab" x="44" y="' + (rateY + 4) + '">rate</text>';
     b += '<text class="c-lab" x="44" y="' + (capY + 4) + '">' + e(c.capName || 'capacity') + '</text>';
     b += '<text class="c-sl" x="44" y="' + (rateY - 20) + '">' + e(c.rateBits || '') + '</text>';
-    b += '<text class="c-sl" x="44" y="' + (capY + 22) + '">' + e(c.capBits || '') + '</text>';
+    b += capBitsSvg(c.capBits || '', 44, capY + 22);
     b += '<text class="c-lab" x="44" y="' + (rateY - 40) + '">' + e(c.ivLabel || 'IV = 0') + '</text>';
     var i, endX = x0 + n * stageW + 22;
     b += '<path class="c-rail rate" d="M' + x0 + ' ' + rateY + ' H ' + endX + '"/>';
-    b += '<path class="c-rail cap" d="M' + x0 + ' ' + capY + ' H ' + endX + '"/>';
+    b += '<path class="c-rail cap" d="M' + railStart(x0, c.capName || 'capacity') + ' ' + capY + ' H ' + endX + '"/>';
     var bottom = capY + 34;
     for (i = 0; i < n; i++) {
       var sx = x0 + i * stageW, px = sx + 110;
@@ -1452,15 +1470,27 @@
     if (c.finalTag) {
       var tx = x0 + (n - 1) * stageW + 42;
       b += xor(tx, capY, 'ff');
-      b += '<text class="c-lab" x="' + (tx - 40) + '" y="' + (capY - 18) + '">' + e(c.finalTag) + '</text>';
+      // 两个置换框之间只有约 68px，标签放不下：改放到容量线下方，用竖引线连回 ⊕
+      var tagY = (c.feedforward ? capY + 62 : capY + 34) + 22, tagW = cTextW(c.finalTag, 11.5);
+      if (c.feedforward && c.ffLabel !== '') {
+        var ffl = c.ffLabel || L('把置换前的容量侧前馈回来', 'capacity before the permutation is fed forward');
+        var ffx0 = x0 + 110 + 38 - Math.min(stageW - 56, 150) / 2 - 20;
+        if (ffx0 + cTextW(ffl, 11.5) + 12 > tx - tagW / 2) tagY += 18;
+      }
+      b += '<path class="c-dim" stroke="#94a3b8" stroke-dasharray="2 3" d="M' + tx + ' ' + (capY + 12) + ' V ' + (tagY - 13) + '"/>';
+      b += '<text class="c-lab" x="' + tx + '" y="' + tagY + '" text-anchor="middle">' + e(c.finalTag) + '</text>';
+      if (tagY + 8 > bottom) bottom = tagY + 8;
       if (c.finalTagNote) { var tb = band(bottom + 12, c.finalTagNote); b += tb.svg; bottom += tb.h + 12; }
     }
     if (c.finalPerm) {
       var fx = endX + 24, fw = 116;
       b += '<rect class="c-perm" x="' + fx + '" y="' + (rateY - 34) + '" width="' + fw + '" height="' + (capY-rateY+68) + '" rx="12"/>';
-      b += '<text class="c-perm-t" x="' + (fx+fw/2) + '" y="' + ((rateY+capY)/2) + '">' + e(c.finalPerm) + '</text><text class="c-perm-s" x="' + (fx+fw/2) + '" y="' + ((rateY+capY)/2+22) + '">' + L('终结 · 无前馈', 'final · no feed-forward') + '</text>';
-      b += '<path class="c-rail rate" d="M' + endX + ' ' + rateY + ' H ' + fx + ' M' + (fx + fw) + ' ' + rateY + ' H ' + (fx + fw + 10) + '"/>';
-      b += '<path class="c-rail cap" d="M' + endX + ' ' + capY + ' H ' + fx + ' M' + (fx + fw) + ' ' + capY + ' H ' + (fx + fw + 10) + '"/>';
+      b += '<text class="c-perm-t" x="' + (fx+fw/2) + '" y="' + ((rateY+capY)/2) + '">' + e(c.finalPerm) + '</text>' + wrapByWidth(L('终结 · 无前馈', 'final · no feed-forward'), fw - 16, 10.5 * 1.15).map(function (t, k) { return '<text class="c-perm-s" x="' + (fx+fw/2) + '" y="' + ((rateY+capY)/2+22+k*14) + '">' + e(t) + '</text>'; }).join('');
+      // 延长的轨道线要画在 ⊕ 之下：插到最早的轨道线前面，不盖住末段的 ⊕
+      var ext = '<path class="c-rail rate" d="M' + endX + ' ' + rateY + ' H ' + fx + ' M' + (fx + fw) + ' ' + rateY + ' H ' + (fx + fw + 10) + '"/>' +
+        '<path class="c-rail cap" d="M' + endX + ' ' + capY + ' H ' + fx + ' M' + (fx + fw) + ' ' + capY + ' H ' + (fx + fw + 10) + '"/>';
+      var ri = b.indexOf('<path class="c-rail rate"');
+      b = ri >= 0 ? b.slice(0, ri) + ext + b.slice(ri) : b + ext;
       endX = fx + fw + 10;
     }
     var both = c.outFrom === 'both';
@@ -1495,11 +1525,11 @@
     b += '<text class="c-lab" x="44" y="' + (rateY + 4) + '">rate</text>';
     b += '<text class="c-lab" x="44" y="' + (capY + 4) + '">' + e(c.capName || 'capacity') + '</text>';
     b += '<text class="c-sl" x="44" y="' + (rateY - 20) + '">' + e(c.rateBits || '') + '</text>';
-    b += '<text class="c-sl" x="44" y="' + (capY + 22) + '">' + e(c.capBits || '') + '</text>';
+    b += capBitsSvg(c.capBits || '', 44, capY + 22);
     b += '<text class="c-lab" x="44" y="' + (rateY - 40) + '">' + e(c.ivLabel || 'IV = 0') + '</text>';
     var i, endX = x0 + n * stageW + 10;
     b += '<path class="c-rail rate" d="M' + x0 + ' ' + rateY + ' H ' + endX + '"/>';
-    b += '<path class="c-rail cap" d="M' + x0 + ' ' + capY + ' H ' + endX + '"/>';
+    b += '<path class="c-rail cap" d="M' + railStart(x0, c.capName || 'capacity') + ' ' + capY + ' H ' + endX + '"/>';
     var pw = 110, boxTop = rateY - 34, boxH = capY - rateY + 68;
     function permBox(bx, lines) {
       var o = '<rect class="c-perm" x="' + bx + '" y="' + boxTop + '" width="' + pw + '" height="' + boxH + '" rx="12"/>';
@@ -1628,18 +1658,19 @@
   /* 压缩盒内画 b 路并行分支（Counter-bDM 等）：标题 + 纵向排列的分支小盒 */
   function parallelBox(x, y, w, c) {
     var items = c.parallel.items, capL = c.parallel.caption ? wrapByWidth(c.parallel.caption, w - 20, 10.5) : [];
-    var hh = 34 + items.length * 27 + 8 + capL.length * 14 + (capL.length ? 4 : 0);
+    var tl = wrapByWidth(c.box || 'F', w - 20, 14), th = (tl.length - 1) * 17;   // 标题过长时折行，框随之加高
+    var hh = 34 + th + items.length * 27 + 8 + capL.length * 14 + (capL.length ? 4 : 0);
     var q = '<rect class="c-perm" x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" rx="12"/>';
-    q += '<text class="c-perm-t" x="' + (x + w / 2) + '" y="' + (y + 24) + '">' + e(c.box || 'F') + '</text>';
+    tl.forEach(function (t, k) { q += '<text class="c-perm-t" x="' + (x + w / 2) + '" y="' + (y + 24 + k * 17) + '">' + e(t) + '</text>'; });
     items.forEach(function (t, k) {
-      var yy = y + 34 + k * 27;
+      var yy = y + 34 + th + k * 27;
       if (t === '⋮') { q += '<text class="c-t" x="' + (x + w / 2) + '" y="' + (yy + 16) + '">⋮</text>'; return; }
       q += '<rect class="c-msg" x="' + (x + 12) + '" y="' + yy + '" width="' + (w - 24) + '" height="22" rx="6"/>';
       var tw = cTextW(t, 11.5), adj = tw > w - 34 ? ' textLength="' + (w - 34).toFixed(1) + '" lengthAdjust="spacingAndGlyphs"' : '';
       q += '<text class="c-s" x="' + (x + w / 2) + '" y="' + (yy + 15) + '"' + adj + '>' + e(t) + '</text>';
     });
     capL.forEach(function (t, k) {
-      q += '<text class="c-s" x="' + (x + w / 2) + '" y="' + (y + 34 + items.length * 27 + 12 + k * 14) + '">' + e(t) + '</text>';
+      q += '<text class="c-s" x="' + (x + w / 2) + '" y="' + (y + 34 + th + items.length * 27 + 12 + k * 14) + '">' + e(t) + '</text>';
     });
     return { svg: q, h: hh };
   }
@@ -1811,7 +1842,7 @@
     b += '<text class="c-lab" x="44" y="' + (rateY + 4) + '">rate</text>';
     b += '<text class="c-lab" x="44" y="' + (capY + 4) + '">' + e(c.capName || 'capacity') + '</text>';
     b += '<text class="c-sl" x="44" y="' + (rateY - 20) + '">' + e(c.rateBits || '') + '</text>';
-    b += '<text class="c-sl" x="44" y="' + (capY + 22) + '">' + e(c.capBits || '') + '</text>';
+    b += capBitsSvg(c.capBits || '', 44, capY + 22);
     b += '<text class="c-lab" x="44" y="' + (rateY - 58) + '">' + e(c.ivLabel || 'IV') + '</text>';
     var boxTop = rateY - 34, boxH = capY - rateY + 68;
     function box(x, w, text, cls, sub) {
@@ -1832,7 +1863,7 @@
     }
     var endX = 808;
     b += '<path class="c-rail rate" d="M' + x0 + ' ' + rateY + ' H ' + endX + '"/>';
-    b += '<path class="c-rail cap" d="M' + x0 + ' ' + capY + ' H ' + endX + '"/>';
+    b += '<path class="c-rail cap" d="M' + railStart(x0, c.capName || 'capacity') + ' ' + capY + ' H ' + endX + '"/>';
     b += box(150, 74, ph.init, 'c-perm', ph.initSub);
     [0, 1].forEach(function (i) {
       var sx = 236 + i * 186;
@@ -1860,6 +1891,68 @@
     var H = bottom + 10 + nb.h + 16;
     return svgOf(H, b.replace('height="600"', 'height="' + H + '"'));
   }
+
+  /* 运行时兜底：按浏览器实际字形宽度检查每段文字，超出所在方框时压缩字距，
+     不同系统字体下估算宽度失准也不会溢出。只处理落在实心方框内的文字，虚线面板框、底色与说明条除外。 */
+  function fitSvgText(root) {
+    var svgs = (root || document).querySelectorAll('svg');
+    Array.prototype.forEach.call(svgs, function (sv) {
+      if (sv.getAttribute('data-fit') === '1' || !sv.querySelector('text')) return;
+      var rects = [];
+      Array.prototype.forEach.call(sv.querySelectorAll('rect'), function (r) {
+        var c = r.getAttribute('class') || '';
+        if (/d-frame|d-bg|c-bg|c-band/.test(c) || r.getAttribute('fill') === 'none') return;
+        var b; try { b = r.getBBox(); } catch (x) { return; }
+        if (b.width > 8 && b.height > 8) rects.push(b);
+      });
+      var measured = false;
+      Array.prototype.forEach.call(sv.querySelectorAll('text'), function (t) {
+        var bb; try { bb = t.getBBox(); } catch (x) { return; }
+        if (!bb.width) return;
+        measured = true;
+        var anc = t.getAttribute('text-anchor') || getComputedStyle(t).textAnchor || 'start';
+        var ax = parseFloat(t.getAttribute('x')), cy = bb.y + bb.height / 2;
+        if (isNaN(ax)) return;
+        var best = null;
+        rects.forEach(function (r) {
+          if (ax >= r.x && ax <= r.x + r.width && cy >= r.y && cy <= r.y + r.height && (!best || r.width * r.height < best.width * best.height)) best = r;
+        });
+        var cur0 = t.getComputedTextLength ? t.getComputedTextLength() : bb.width;
+        if (!best) {
+          // 不在任何方框内的标签（如左侧的 rate / capacity 位宽说明）：若伸进旁边的方框，压到方框边缘为止
+          var lim = Infinity;
+          rects.forEach(function (r) {
+            var oy = Math.min(bb.y + bb.height, r.y + r.height) - Math.max(bb.y, r.y);
+            if (oy <= 2) return;
+            if (anc === 'start' && r.x > ax && r.x < bb.x + bb.width) lim = Math.min(lim, r.x - ax - 6);
+            if (anc === 'end' && r.x + r.width < ax && r.x + r.width > bb.x) lim = Math.min(lim, ax - (r.x + r.width) - 6);
+          });
+          if (lim < cur0 && lim > 0.65 * cur0) {
+            t.setAttribute('textLength', lim.toFixed(1));
+            t.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+            t.setAttribute('data-fitted', '1');
+          }
+          return;
+        }
+        var avail = anc === 'middle' ? 2 * Math.min(ax - best.x, best.x + best.width - ax) - 5
+          : anc === 'end' ? ax - best.x - 3 : best.x + best.width - ax - 3;
+        var cur = t.getComputedTextLength ? t.getComputedTextLength() : bb.width;
+        if (avail > 12 && cur > avail + 0.5) {
+          t.setAttribute('textLength', avail.toFixed(1));
+          t.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+          t.setAttribute('data-fitted', '1');
+        }
+      });
+      if (measured) sv.setAttribute('data-fit', '1');
+    });
+  }
+  if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+    var fitTimer = null;
+    var kick = function () { if (fitTimer) return; fitTimer = setTimeout(function () { fitTimer = null; fitSvgText(document); }, 60); };
+    var start = function () { new MutationObserver(kick).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'class', 'style'] }); kick(); };
+    if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+  }
+  global.HashFitSvgText = fitSvgText;
 
   global.HashConstruction = {
     setLang: function (lang) { if (global.HashDiagram && global.HashDiagram.setLang) global.HashDiagram.setLang(lang); },
