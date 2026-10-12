@@ -47,6 +47,11 @@
   }
   const cmp = (a, b) => (a.t.key < b.t.key ? -1 : a.t.key > b.t.key ? 1 : a.position - b.position);
   const msgs = TR.messages.map(m => ({ ...m, t: tinfo(m) }));
+  /* 帖子日期（YYYY-MM-DD）与发现的首次报告日期：优先取数据里的 date，否则取所引帖子中最早的一条 */
+  const msgById = Object.fromEntries(msgs.map(m => [m.msg_id, m]));
+  M.mdate = id => ((msgById[id] || {}).t || {}).key ? msgById[id].t.key.slice(0, 10) : '';
+  M.fDate = f => f.date || (f.msgs || []).map(M.mdate).filter(Boolean).sort()[0] || '';
+  M.asOf = () => String(TR.generated || '');
   const st = f => (f.fix || {}).state || 'open';
   M.st = st;
   const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');

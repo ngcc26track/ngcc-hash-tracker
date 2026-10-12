@@ -25,7 +25,9 @@
   const implCell = a => a.implLv ? iTag(a.implLv) : a.implFixed ? `<span class="lv lv-P">${M.lang === 'en' ? 'Revised' : '已修订'}</span>` : '<span class="muted">—</span>';
   const verCell = a => `<span class="ver">${a.versions.length > 1 ? `<span class="up">${esc(a.curVer)}</span> ↑` : esc(a.curVer)}</span>`;
   const algLink = (a, text) => `<a class="alg-link" href="#alg/${esc(a.id)}">${esc(text || a.name)}</a>`;
-  const srcLinks = ids => (ids || []).map(id => `<a href="${esc(M.MSGURL(id))}" target="_blank" rel="noopener">${esc(id.slice(0, 8))} ↗</a>`).join(' ');
+  const srcLinks = ids => (ids || []).map(id => { const d = M.mdate(id); return `<a href="${esc(M.MSGURL(id))}" target="_blank" rel="noopener">${esc(id.slice(0, 8))}${d ? ' · ' + esc(d.slice(5)) : ''} ↗</a>`; }).join(' ');
+  const fDateTag = f => { const d = M.fDate(f); return d ? `<span class="f-date"><b>${esc(T().alg.first)}</b>${CO()}${esc(d)}</span>` : ''; };
+  const asOf = () => M.asOf() ? `<small class="asof">${esc(T().asof)} ${esc(M.asOf())}</small>` : '';
   /* 撤回：沿用追踪站的显示方式 */
   const wdTag = a => a.withdrawn ? `<span class="wdtag">${M.lang === 'en' ? 'Withdrawn' : '已撤回'}${a.cand.date ? ' · ' + esc(a.cand.date.slice(5)) : ''}</span>` : '';
   const wdBanner = a => a.withdrawn ? `<div class="wdban"><b>${M.lang === 'en' ? `Withdrawn by the submitters${a.cand.date ? ' on ' + esc(a.cand.date) : ''}.` : `提交方${a.cand.date ? '于 ' + esc(a.cand.date) + ' ' : ''}宣布撤回该算法。`}</b> ${esc(M.tx(a.cand.note, a.cand.note_en) || '')} ${(a.cand.msgs || []).map(id => `<a href="${esc(M.MSGURL(id))}" target="_blank" rel="noopener">${M.lang === 'en' ? 'Forum post' : '原帖'} ↗</a>`).join(' ')}<br><span class="wdsub">${M.lang === 'en' ? 'Findings and levels below are kept as they stood at withdrawal.' : '以下发现与等级保留撤回时的记录。'}</span></div>` : '';
@@ -89,7 +91,7 @@
       <div class="grid2">
         <section class="panel"><div class="panel-h"><h2>${esc(t.updates)}</h2></div>
           <ul class="upd">${ups.slice(0, 8).map(({ a, v }) => `<li><span class="d">${esc(v.date || '')}</span><span>${algLink(a, a.name + ' ' + v.v)} · ${esc(v.wd ? v.label : M.vLabel(a, v))}</span></li>`).join('')}</ul></section>
-        <section class="panel"><div class="panel-h"><h2>${esc(t.recent)}</h2><a href="#forum">${esc(t.more)}</a></div><ul class="feed">${recent.map(feedItem).join('')}</ul></section>
+        <section class="panel"><div class="panel-h"><h2>${esc(t.recent)}${asOf()}</h2><a href="#forum">${esc(t.more)}</a></div><ul class="feed">${recent.map(feedItem).join('')}</ul></section>
       </div>
       <section class="panel"><div class="panel-h"><h2>${esc(t.routes)}</h2><a href="#compare">${esc(t.nav.compare)} →</a></div><div class="routes">${routes}</div></section>`;
   }
@@ -209,14 +211,14 @@
     const list = fs.length ? `<ul class="findings">${fs.map(f => { const fx = f.fix || {}, s = M.fT(f); return `<li>
         <div class="f-h">${kindTag(f)}<span class="f-t">${esc(s.title)}</span>${f.kind === '提示' ? '' : `<span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}${fx.version ? ' · ' + esc(fx.version) : ''}</span>`}</div>
         ${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('') : ''}${s.note ? `<p class="f-note"><b>${['claimed', 'verified', 'failed'].includes(M.st(f)) ? c.noteRev : c.noteResp}</b>${esc(s.note)}</p>` : ''}
-        <div class="f-src"><span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}${ext(f)}${fx.msgs ? `<span><b>${c.resp}</b></span>${srcLinks(fx.msgs)}` : ''}${f.verify ? `<span class="vtag" title="${esc(c.mview)}">${c.verify}${CO()}${esc(M.vfName(f.verify))}</span>` : ''}</div></li>`; }).join('')}</ul>`
+        <div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}${ext(f)}${fx.msgs ? `<span><b>${c.resp}</b></span>${srcLinks(fx.msgs)}` : ''}${f.verify ? `<span class="vtag" title="${esc(c.mview)}">${c.verify}${CO()}${esc(M.vfName(f.verify))}</span>` : ''}</div></li>`; }).join('')}</ul>`
       : `<p class="muted">${a.ana === 'NA' ? c.noFind.NA : c.noFind.x}</p>`;
     const sec = a.at && a.at.analysis && a.at.analysis.security;
     // 设计者论证按中文标签挑出，再取当前语言同一位置的条目（中英文结构一致）
     const secZh = M.atlasZh[a.id] && M.atlasZh[a.id].analysis && M.atlasZh[a.id].analysis.security;
     const designer = sec && secZh ? secZh.points.map((p, i) => /^设计者(分析|给出|说明)?$/.test(p.label) ? sec.points[i] : null).filter(Boolean) : [];
     const thread = a.msgs.length ? `<details class="thread"><summary>${esc(c.thread)}${PAR(a.msgs.length)}</summary>${a.msgs.map(m => `<article class="msg ${m.kind}"><div class="msg-h"><span class="kind ${m.kind}">${esc(t.kind[m.kind] || m.kind)}</span><b>${esc(m.author)}</b><span class="t">${esc(m.t.label)}</span><a href="${esc(m.url)}" target="_blank" rel="noopener">${t.orig}</a></div><div class="msg-b">${esc(M.excerpt(m.body, 700))}</div></article>`).join('')}</details>` : `<p class="muted">${c.noThread}</p>`;
-    return `<section class="panel"><div class="panel-h"><h2>${esc(c.findings)}</h2>${a.thread ? `<a href="${esc(a.thread)}" target="_blank" rel="noopener">${c.openThread}</a>` : ''}</div>
+    return `<section class="panel"><div class="panel-h"><h2>${esc(c.findings)}${asOf()}</h2>${a.thread ? `<a href="${esc(a.thread)}" target="_blank" rel="noopener">${c.openThread}</a>` : ''}</div>
         <div class="stbox">${anaPill(a)}<p>${esc(M.summary(a) || '')}</p></div>${list}
         ${M.hl(a) ? `<div class="hl"><span>${esc(c.hl)} <em>${esc(c.mview)}</em></span><p>${esc(M.hl(a))}</p></div>` : ''}</section>
       ${designer.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.designerSec)}</h2></div><div class="points">${designer.map(p => `<article><span class="kind">${esc(p.label)}</span><h3>${esc(p.title)}</h3><p>${esc(p.body)}${refLinks(a, p.refs)}</p></article>`).join('')}</div></section>` : ''}
@@ -237,7 +239,7 @@
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.perfDetail)}</h2><a href="#perf">${esc(t.nav.perf)} →</a></div>${isaSwitch(M.usesIsa(a, 'xeon'))}<div class="tiles">${tiles}</div>${ruler}
         ${note ? `<p class="note">${M.rich(note)}</p>` : ''}</section>
       ${imp ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implNotes)}</h2></div><p class="lead">${esc(imp.lead)}</p><div class="points">${imp.points.map(q => `<article><span class="kind">${esc(q.label)}</span><h3>${esc(q.title)}</h3><p>${esc(q.body)}${refLinks(a, q.refs)}</p></article>`).join('')}</div></section>` : ''}
-      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${esc(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('') : ''}<div class="f-src"><span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
+      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}${asOf()}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${esc(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('') : ''}<div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
         ${pubIss.map(x => `<li><div class="f-h"><span class="lv lv-K">${M.lang === 'en' ? 'Benchmark' : '统一实测'}</span><span class="f-t">${esc(x.item)}${M.lang === 'en' ? ': ' : '：'}${esc(x.what)}</span></div>${/^见/.test(x.zh.verdict) ? '' : `<p>${esc(x.verdict)}</p>`}</li>`).join('')}</ul></section>` : ''}`;
   }
 
@@ -329,7 +331,7 @@
   function viewForum() {
     const t = T(), f = t.forum;
     const names = [...new Set(M.talkAll.map(m => m.algorithm))].sort((a, b) => a.localeCompare(b));
-    return `<section class="panel"><div class="panel-h"><h2>${esc(f.title)} <small>${esc(f.excerpt)}</small></h2>
+    return `<section class="panel"><div class="panel-h"><h2>${esc(f.title)} <small>${esc(f.excerpt)}</small>${asOf()}</h2>
       <div class="controls"><div class="seg" id="f-kind">${[['all', f.all], ['comment', f.c], ['response', f.r]].map(([k, l]) => `<button type="button" data-k="${k}" aria-pressed="${fs.kind === k}">${esc(l)}</button>`).join('')}</div>
       <select id="f-falg"><option value="all">${esc(f.algAll)}</option>${names.map(n => `<option ${fs.alg === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div></div><ul class="feed" id="feed"></ul></section>`;
   }
