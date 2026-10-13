@@ -15,6 +15,34 @@
   /* 界面文字中的 **重点** 渲染为加粗（先转义，只认这一种标记） */
   M.rich = s => M.esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
   M.plain = s => String(s ?? '').replace(/\*\*/g, '');
+  /* 数学记法：在已转义的文本上把 2^{…} / 2^128 / 2^(…) 显示为上标，x_{…} 与单字母下标（H_1、P_X）显示为下标。
+     代码标识符（red_p、Garnet_768、KAT_2_12）不动：下标只认花括号，或单字母底数 + 单字符下标。 */
+  M.math = (() => {
+    const W = /[0-9A-Za-z]/;
+    const grab = (s, i, open, close) => { let d = 0; for (let j = i; j < s.length; j++) { if (s[j] === open) d++; else if (s[j] === close && --d === 0) return j; } return -1; };
+    const f = s => {
+      let o = '';
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i], prev = s[i - 1] || '', nx = s[i + 1] || '';
+        if (ch === '^' && /[0-9A-Za-z)}\]|]/.test(prev)) {
+          const neg = (nx === '-' || nx === '−') && /[{(]/.test(s[i + 2] || '') ? nx : '', k = i + 1 + neg.length, br = s[k] || '';
+          if (br === '{' || br === '(') { const j = grab(s, k, br, br === '{' ? '}' : ')'); if (j > 0) { o += '<sup>' + neg + f(s.slice(k + 1, j)) + '</sup>'; i = j; continue; } }
+          const m = /^[−-]?(?:\d+(?:\.\d+)?|[A-Za-z](?![A-Za-z]))/.exec(s.slice(i + 1));
+          if (m) { o += '<sup>' + m[0] + '</sup>'; i += m[0].length; continue; }
+        }
+        if (ch === '_' && /[A-Za-z]/.test(prev) && !/[0-9A-Za-z_]/.test(s[i - 2] || '')) {
+          if (nx === '{') { const j = grab(s, i + 1, '{', '}'); if (j > 0) { o += '<sub>' + f(s.slice(i + 2, j)) + '</sub>'; i = j; continue; } }
+          if (W.test(nx) && !/[0-9A-Za-z_]/.test(s[i + 2] || '')) { o += '<sub>' + nx + '</sub>'; i += 1; continue; }
+          const w = /^[a-z]{2,8}(?![0-9A-Za-z_])/.exec(s.slice(i + 1));   // T_coll、q_eval
+          if (w) { o += '<sub>' + w[0] + '</sub>'; i += w[0].length; continue; }
+        }
+        o += ch;
+      }
+      return o;
+    };
+    return f;
+  })();
+  M.mx = s => M.math(M.esc(s));
 
   /* ---------- 设计图谱（中文与英文两份，结构相同） ---------- */
   function atlasOf(cards, specs, noLat) {

@@ -136,7 +136,7 @@
     const t = T(), id = a.id, rz = M.rank('zen4'), pz = M.pv(a, 'zen4'), F = full ? ' data-full' : '';
     const faster = pz ? ['SHA-512', 'SHA-256', 'SM3'].map(n => ({ n, r: M.base(n, 'zen4') / pz })) : [];
     return `<div class="glance">
-      <a class="g-card" href="#alg/${id}/security"${F}><span class="g-k">${esc(t.alg.glance.sec)}</span><div class="g-v">${anaPill(a)}${fPill(a)}</div><p class="g-sum">${esc(M.summary(a) || (a.thirdParty ? '' : t.alg.noFind.NA))}</p><span class="g-more">${esc(t.alg.more)} →</span></a>
+      <a class="g-card" href="#alg/${id}/security"${F}><span class="g-k">${esc(t.alg.glance.sec)}</span><div class="g-v">${anaPill(a)}${fPill(a)}</div><p class="g-sum">${M.mx(M.summary(a) || (a.thirdParty ? '' : t.alg.noFind.NA))}</p><span class="g-more">${esc(t.alg.more)} →</span></a>
       <a class="g-card" href="#alg/${id}/perf"${F}><span class="g-k">${esc(t.alg.glance.perf)}</span>${pz ? `<div class="g-v"><strong>${M.fmtCpb(pz)}</strong><span>cycles/byte · ${esc(condName('zen4'))}${esc(FS(flagOf(a, 'zen4')))}</span></div>
         <p>${esc(t.alg.rankOf(rz.r[id], rz.of))}${SE()}${faster.map(f => M.lang === 'en' ? `${f.r >= 1 ? f.r.toFixed(2) + '× faster' : (1 / f.r).toFixed(2) + '× slower'} than ${f.n}` : `${f.r >= 1 ? '快于' : '慢于'} ${f.n} ${(f.r >= 1 ? f.r : 1 / f.r).toFixed(2)} 倍`).join(M.lang === 'en' ? '; ' : '，')}</p>` : `<p>${esc(t.alg.perfNone)}</p>`}
         <p class="g-sub">Xeon ${esc((t.perf.conds.xeon.split('·')[1] || '').trim())}${CO()}${M.fmtCpb(M.pv(a, 'xeon'))} cycles/byte${esc(FS(flagOf(a, 'xeon')))}</p><span class="g-more">${esc(t.alg.more)} →</span></a>
@@ -209,8 +209,8 @@
     const kindTag = f => (f.kind && f.kind !== '安全') ? `<span class="lv lv-K">${esc(M.kindName(f.kind))}</span>` : `<span class="lv lv-${esc(f.level)}"><b>${esc(f.level)}</b>${esc(M.lvName(f.level))}</span>`;
     const ext = f => (f.links || []).map(l => ` <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(M.lang === 'en' && l.label_en ? l.label_en : l.label)} ↗</a>`).join('') + (f.ngcc_dev ? ` <a href="${esc(f.ngcc_dev.url)}" target="_blank" rel="noopener">ngcc.dev ${esc(f.ngcc_dev.id)} ↗</a>` : '');
     const list = fs.length ? `<ul class="findings">${fs.map(f => { const fx = f.fix || {}, s = M.fT(f); return `<li>
-        <div class="f-h">${kindTag(f)}<span class="f-t">${esc(s.title)}</span>${f.kind === '提示' ? '' : `<span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}${fx.version ? ' · ' + esc(fx.version) : ''}</span>`}</div>
-        ${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('') : ''}${s.note ? `<p class="f-note"><b>${['claimed', 'verified', 'failed'].includes(M.st(f)) ? c.noteRev : c.noteResp}</b>${esc(s.note)}</p>` : ''}
+        <div class="f-h">${kindTag(f)}<span class="f-t">${M.mx(s.title)}</span>${f.kind === '提示' ? '' : `<span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}${fx.version ? ' · ' + esc(fx.version) : ''}</span>`}</div>
+        ${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${M.mx(x)}</p>`).join('') : ''}${s.note ? `<p class="f-note"><b>${['claimed', 'verified', 'failed'].includes(M.st(f)) ? c.noteRev : c.noteResp}</b>${M.mx(s.note)}</p>` : ''}
         <div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}${ext(f)}${fx.msgs ? `<span><b>${c.resp}</b></span>${srcLinks(fx.msgs)}` : ''}${f.verify ? `<span class="vtag" title="${esc(c.mview)}">${c.verify}${CO()}${esc(M.vfName(f.verify))}</span>` : ''}</div></li>`; }).join('')}</ul>`
       : `<p class="muted">${a.ana === 'NA' ? c.noFind.NA : c.noFind.x}</p>`;
     const sec = a.at && a.at.analysis && a.at.analysis.security;
@@ -219,7 +219,7 @@
     const designer = sec && secZh ? secZh.points.map((p, i) => /^设计者(分析|给出|说明)?$/.test(p.label) ? sec.points[i] : null).filter(Boolean) : [];
     const thread = a.msgs.length ? `<details class="thread"><summary>${esc(c.thread)}${PAR(a.msgs.length)}</summary>${a.msgs.map(m => `<article class="msg ${m.kind}"><div class="msg-h"><span class="kind ${m.kind}">${esc(t.kind[m.kind] || m.kind)}</span><b>${esc(m.author)}</b><span class="t">${esc(m.t.label)}</span><a href="${esc(m.url)}" target="_blank" rel="noopener">${t.orig}</a></div><div class="msg-b">${esc(M.excerpt(m.body, 700))}</div></article>`).join('')}</details>` : `<p class="muted">${c.noThread}</p>`;
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.findings)}${asOf()}</h2>${a.thread ? `<a href="${esc(a.thread)}" target="_blank" rel="noopener">${c.openThread}</a>` : ''}</div>
-        <div class="stbox">${anaPill(a)}<p>${esc(M.summary(a) || '')}</p></div>${list}
+        <div class="stbox">${anaPill(a)}<p>${M.mx(M.summary(a) || '')}</p></div>${list}
         ${M.hl(a) ? `<div class="hl"><span>${esc(c.hl)} <em>${esc(c.mview)}</em></span><p>${esc(M.hl(a))}</p></div>` : ''}</section>
       ${designer.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.designerSec)}</h2></div><div class="points">${designer.map(p => `<article><span class="kind">${esc(p.label)}</span><h3>${esc(p.title)}</h3><p>${esc(p.body)}${refLinks(a, p.refs)}</p></article>`).join('')}</div></section>` : ''}
       <section class="panel">${thread}</section>`;
@@ -239,7 +239,7 @@
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.perfDetail)}</h2><a href="#perf">${esc(t.nav.perf)} →</a></div>${isaSwitch(M.usesIsa(a, 'xeon'))}<div class="tiles">${tiles}</div>${ruler}
         ${note ? `<p class="note">${M.rich(note)}</p>` : ''}</section>
       ${imp ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implNotes)}</h2></div><p class="lead">${esc(imp.lead)}</p><div class="points">${imp.points.map(q => `<article><span class="kind">${esc(q.label)}</span><h3>${esc(q.title)}</h3><p>${esc(q.body)}${refLinks(a, q.refs)}</p></article>`).join('')}</div></section>` : ''}
-      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}${asOf()}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${esc(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('') : ''}<div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
+      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}${asOf()}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${M.mx(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${M.mx(x)}</p>`).join('') : ''}<div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
         ${pubIss.map(x => `<li><div class="f-h"><span class="lv lv-K">${M.lang === 'en' ? 'Benchmark' : '统一实测'}</span><span class="f-t">${esc(x.item)}${M.lang === 'en' ? ': ' : '：'}${esc(x.what)}</span></div>${/^见/.test(x.zh.verdict) ? '' : `<p>${esc(x.verdict)}</p>`}</li>`).join('')}</ul></section>` : ''}`;
   }
 
@@ -252,7 +252,7 @@
       if (v.sub) ds = `<ul class="docs">${docLi('zip', c.zip.replace(' ↗', ''), M.ZIP(a.name), '')}${a.subDocs.map(d => docLi(M.lang === 'en' ? 'PDF' : (d.category || 'PDF'), (d.title || d.name) + '.pdf', ROOT.tracker + M.href(d.path), M.fmtB(d.bytes))).join('')}</ul>`;
       else { const fd = a.forumDocs.filter(d => (v.msgs || []).includes(d.msg_id)); if (fd.length) ds = `<ul class="docs">${fd.map(d => docLi(M.lang === 'en' ? 'attachment' : '论坛附件', d.name, esc(d.url), d.size || M.fmtB(d.bytes))).join('')}</ul>`; }
       const cur = i === a.versions.length - 1;
-      return `<li class="${cur ? 'cur' : ''}"><div class="vh"><b>${esc(v.v)}</b>${v.date ? `<span>${esc(v.date)}</span>` : ''}${cur ? `<span class="fx fx-claimed">${c.cur}</span>` : ''}${(v.msgs || []).length ? `<span>${c.ann} ${srcLinks(v.msgs)}</span>` : ''}</div><div class="vl">${esc(v.wd ? v.label : M.vLabel(a, v))}</div>${ds}</li>`;
+      return `<li class="${cur ? 'cur' : ''}"><div class="vh"><b>${esc(v.v)}</b>${v.date ? `<span>${esc(v.date)}</span>` : ''}${cur ? `<span class="fx fx-claimed">${c.cur}</span>` : ''}${(v.msgs || []).length ? `<span>${c.ann} ${srcLinks(v.msgs)}</span>` : ''}</div><div class="vl">${M.mx(v.wd ? v.label : M.vLabel(a, v))}</div>${ds}</li>`;
     }).join('');
     const r = a.at && a.at.revision;
     const rev = r && r.changes && r.changes.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.revDetail)}</h2><span class="muted">${esc(r.diagramVersion)}</span></div>
