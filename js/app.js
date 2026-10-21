@@ -26,6 +26,19 @@
   const verCell = a => `<span class="ver">${a.versions.length > 1 ? `<span class="up">${esc(a.curVer)}</span> ↑` : esc(a.curVer)}</span>`;
   const algLink = (a, text) => `<a class="alg-link" href="#alg/${esc(a.id)}">${esc(text || a.name)}</a>`;
   const srcLinks = ids => (ids || []).map(id => { const d = M.mdate(id); return `<a href="${esc(M.MSGURL(id))}" target="_blank" rel="noopener">${esc(id.slice(0, 8))}${d ? ' · ' + esc(d.slice(5)) : ''} ↗</a>`; }).join(' ');
+  /* 发现详情：按 \n 分段；段首的固定标签（原理、本站核对、Mechanism 等）加粗；首段为结论，略加强调 */
+  const LBL = /^((?:原理|构造|实例|条件|影响|对照|提交方说明|本站复现|本站核对|补充)(?:（[^）]{1,12}）)?：|(?:Mechanism|Construction|Example|Conditions|Impact|Control|Submitters' statement|Reproduction|Maintainers' check|Note)(?: \([^)]{1,30}\))?: )/;
+  const detailHtml = s => String(s || '').split(/\n+/).filter(Boolean).map((x, i) => {
+    const m = LBL.exec(x);
+    if (m) { const lab = m[1], sep = lab.endsWith('：') ? '：' : ': '; return `<p><b class="f-lbl">${esc(lab.slice(0, lab.length - sep.length))}</b>${sep}${M.mx(x.slice(lab.length))}</p>`; }
+    return `<p${i === 0 ? ' class="f-lead"' : ''}>${M.mx(x)}</p>`;
+  }).join('');
+  /* 状态框总结：首句（到第一个冒号或句号）加粗，作为结论 */
+  const sumHtml = s => {
+    s = String(s || ''); const en = M.lang === 'en';
+    const m = en ? /^(.{8,220}?(?::|\.)(?=\s))/.exec(s) : /^(.{4,90}?[：。])/.exec(s);
+    return m ? `<b>${M.mx(m[1])}</b>${M.mx(s.slice(m[1].length))}` : M.mx(s);
+  };
   const fDateTag = f => { const d = M.fDate(f); return d ? `<span class="f-date"><b>${esc(T().alg.first)}</b>${CO()}${esc(d)}</span>` : ''; };
   const asOf = () => M.asOf() ? `<small class="asof">${esc(T().asof)} ${esc(M.asOf())}</small>` : '';
   /* 撤回：沿用追踪站的显示方式 */
@@ -210,7 +223,7 @@
     const ext = f => (f.links || []).map(l => ` <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(M.lang === 'en' && l.label_en ? l.label_en : l.label)} ↗</a>`).join('') + (f.ngcc_dev ? ` <a href="${esc(f.ngcc_dev.url)}" target="_blank" rel="noopener">ngcc.dev ${esc(f.ngcc_dev.id)} ↗</a>` : '');
     const list = fs.length ? `<ul class="findings">${fs.map(f => { const fx = f.fix || {}, s = M.fT(f); return `<li>
         <div class="f-h">${kindTag(f)}<span class="f-t">${M.mx(s.title)}</span>${f.kind === '提示' ? '' : `<span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}${fx.version ? ' · ' + esc(fx.version) : ''}</span>`}</div>
-        ${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${M.mx(x)}</p>`).join('') : ''}${s.note ? `<p class="f-note"><b>${['claimed', 'verified', 'failed'].includes(M.st(f)) ? c.noteRev : c.noteResp}</b>${M.mx(s.note)}</p>` : ''}
+        ${s.detail ? detailHtml(s.detail) : ''}${s.note ? `<p class="f-note"><b>${['claimed', 'verified', 'failed'].includes(M.st(f)) ? c.noteRev : c.noteResp}</b>${M.mx(s.note)}</p>` : ''}
         <div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}${ext(f)}${fx.msgs ? `<span><b>${c.resp}</b></span>${srcLinks(fx.msgs)}` : ''}${f.verify ? `<span class="vtag" title="${esc(c.mview)}">${c.verify}${CO()}${esc(M.vfName(f.verify))}</span>` : ''}</div></li>`; }).join('')}</ul>`
       : `<p class="muted">${a.ana === 'NA' ? c.noFind.NA : c.noFind.x}</p>`;
     const sec = a.at && a.at.analysis && a.at.analysis.security;
@@ -219,7 +232,7 @@
     const designer = sec && secZh ? secZh.points.map((p, i) => /^设计者(分析|给出|说明)?$/.test(p.label) ? sec.points[i] : null).filter(Boolean) : [];
     const thread = a.msgs.length ? `<details class="thread"><summary>${esc(c.thread)}${PAR(a.msgs.length)}</summary>${a.msgs.map(m => `<article class="msg ${m.kind}"><div class="msg-h"><span class="kind ${m.kind}">${esc(t.kind[m.kind] || m.kind)}</span><b>${esc(m.author)}</b><span class="t">${esc(m.t.label)}</span><a href="${esc(m.url)}" target="_blank" rel="noopener">${t.orig}</a></div><div class="msg-b">${esc(M.excerpt(m.body, 700))}</div></article>`).join('')}</details>` : `<p class="muted">${c.noThread}</p>`;
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.findings)}${asOf()}</h2>${a.thread ? `<a href="${esc(a.thread)}" target="_blank" rel="noopener">${c.openThread}</a>` : ''}</div>
-        <div class="stbox">${anaPill(a)}<p>${M.mx(M.summary(a) || '')}</p></div>${list}
+        <div class="stbox">${anaPill(a)}<p>${sumHtml(M.summary(a) || '')}</p></div>${list}
         ${M.hl(a) ? `<div class="hl"><span>${esc(c.hl)} <em>${esc(c.mview)}</em></span><p>${esc(M.hl(a))}</p></div>` : ''}</section>
       ${designer.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.designerSec)}</h2></div><div class="points">${designer.map(p => `<article><span class="kind">${esc(p.label)}</span><h3>${esc(p.title)}</h3><p>${esc(p.body)}${refLinks(a, p.refs)}</p></article>`).join('')}</div></section>` : ''}
       <section class="panel">${thread}</section>`;
@@ -239,7 +252,7 @@
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.perfDetail)}</h2><a href="#perf">${esc(t.nav.perf)} →</a></div>${isaSwitch(M.usesIsa(a, 'xeon'))}<div class="tiles">${tiles}</div>${ruler}
         ${note ? `<p class="note">${M.rich(note)}</p>` : ''}</section>
       ${imp ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implNotes)}</h2></div><p class="lead">${esc(imp.lead)}</p><div class="points">${imp.points.map(q => `<article><span class="kind">${esc(q.label)}</span><h3>${esc(q.title)}</h3><p>${esc(q.body)}${refLinks(a, q.refs)}</p></article>`).join('')}</div></section>` : ''}
-      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}${asOf()}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${M.mx(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? String(s.detail).split(/\n+/).map(x => `<p>${M.mx(x)}</p>`).join('') : ''}<div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
+      ${iss.length || pubIss.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.implIssues)}${asOf()}</h2></div><ul class="findings">${iss.map(f => { const s = M.fT(f); return `<li><div class="f-h"><span class="lv lv-K">${esc(M.kindName('实现'))}</span>${f.impl_level ? iTag(f.impl_level) : ''}<span class="f-t">${M.mx(s.title)}</span><span class="fx fx-${esc(M.st(f))}">${esc(M.fxName(M.st(f)))}</span></div>${s.detail ? detailHtml(s.detail) : ''}<div class="f-src">${fDateTag(f)}<span><b>${c.src}</b>${CO()}${esc(s.by || '—')}</span>${srcLinks(f.msgs)}</div></li>`; }).join('')}
         ${pubIss.map(x => `<li><div class="f-h"><span class="lv lv-K">${M.lang === 'en' ? 'Benchmark' : '统一实测'}</span><span class="f-t">${esc(x.item)}${M.lang === 'en' ? ': ' : '：'}${esc(x.what)}</span></div>${/^见/.test(x.zh.verdict) ? '' : `<p>${esc(x.verdict)}</p>`}</li>`).join('')}</ul></section>` : ''}`;
   }
 
@@ -257,7 +270,7 @@
     const r = a.at && a.at.revision;
     const rev = r && r.changes && r.changes.length ? `<section class="panel"><div class="panel-h"><h2>${esc(c.revDetail)}</h2><span class="muted">${esc(r.diagramVersion)}</span></div>
       <div class="changes">${r.changes.map(x => `<article><h3>${esc(x.title)}</h3><dl><dt>${M.lang === 'en' ? 'Before' : '原始材料'}</dt><dd>${esc(x.before)}</dd><dt>${M.lang === 'en' ? 'After' : '修订或说明'}</dt><dd>${esc(x.after)}</dd></dl><p>${esc(x.impact)}</p></article>`).join('')}</div></section>` : '';
-    const srcs = a.at ? `<section class="panel"><div class="panel-h"><h2>${esc(c.atlasSrc)}</h2></div><ol class="srcs">${a.at.sources.map(s => `<li><span class="no">${s.id}</span><div><span class="skind">${esc(s.kind)}</span><a href="${esc(atlasUrl(s.url))}" target="_blank" rel="noopener">${esc(s.label)}${/^https?:/.test(s.url) ? ' ↗' : ''}</a><p>${esc(s.note)}</p></div></li>`).join('')}</ol></section>` : '';
+    const srcs = a.at ? `<section class="panel"><div class="panel-h"><h2>${esc(c.atlasSrc)}</h2></div><ol class="srcs">${a.at.sources.map(s => `<li><span class="no">${s.id}</span><div><span class="skind">${esc(s.kind)}</span><a href="${esc(atlasUrl(s.url))}" target="_blank" rel="noopener">${esc(s.label)}${/^https?:/.test(s.url) ? ' ↗' : ''}</a><p>${M.mx(s.note)}</p></div></li>`).join('')}</ol></section>` : '';
     return `<section class="panel"><div class="panel-h"><h2>${esc(c.versions)}</h2></div><ul class="tl">${tl}</ul></section>${rev}${srcs}`;
   }
 
