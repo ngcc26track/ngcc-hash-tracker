@@ -26,21 +26,71 @@
     <div id="dr-body" class="dr-body"></div>
   </aside>
   <footer class="wrap site-foot"><span id="foot"></span><a href="https://list.niccs.org.cn/archives/list/crypthashforum@list.niccs.org.cn/" target="_blank" rel="noopener">list.niccs.org.cn</a></footer>
-  <script>window.SITE_ROOTS = { tracker: '', atlas: '' };</script>
-  <script src="data/tracker-data.js"></script>
-  <script src="data/perf-data.js"></script>
-  <script src="data/perf-data.en.js"></script>
-  <script src="data/algorithms-extra2.js"></script>
-  <script src="data/algorithms-extra2.en.js"></script>
-  <script src="data/diagram-specs2.js"></script>
-  <script src="data/diagram-specs2.en.js"></script>
-  <script src="data/diagram.js"></script>
-  <script src="data/comparison-data.js"></script>
-  <script src="data/comparison-data.en.js"></script>
-  <script src="data/compare.js"></script>
-  <script src="js/i18n.js"></script>
-  <script src="js/model.js"></script>
-  <script src="js/chart.js"></script>
-  <script src="js/app.js"></script>
+<div id="gate" class="gate"><form class="gate-box" autocomplete="on">
+<div class="gate-t">NGCC 第一轮哈希候选 <span>NGCC Hash Round 1</span></div>
+<label for="gate-pw">访问口令 / Access password</label>
+<input id="gate-pw" type="password" autocomplete="current-password" required>
+<label class="gate-rm"><input id="gate-rm" type="checkbox" checked> 在本设备上记住 / Remember on this device</label>
+<button type="submit">进入 / Enter</button><p id="gate-err" class="gate-err" hidden>口令不正确 / Wrong password</p>
+<noscript><p class="gate-err">需要启用 JavaScript / JavaScript is required</p></noscript></form></div>
+<style>.gate{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:var(--bg,#f4f6f5);padding:16px}
+.gate-box{width:100%;max-width:360px;display:flex;flex-direction:column;gap:10px;padding:24px;border:1px solid #d9e1de;border-radius:12px;background:#fff;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1f2a27}
+.gate-t{font-weight:700;font-size:17px}.gate-t span{display:block;font-weight:400;font-size:13px;color:#5b6b66}
+.gate-box input[type=password]{padding:9px 10px;border:1px solid #c7d2ce;border-radius:8px;font-size:15px}
+.gate-rm{display:flex;gap:6px;align-items:center;font-size:13px;color:#5b6b66}
+.gate-box button{padding:9px;border:0;border-radius:8px;background:#0E5F73;color:#fff;font-size:15px;cursor:pointer}
+.gate-box button[disabled]{opacity:.6}.gate-err{margin:0;color:#b42318;font-size:13px}</style>
+<script src="site.enc.js"></script>
+<script>
+(function () {
+  var E = window.__SITE_ENC, KEY = 'ngcc.sitekey.' + E.kid, te = new TextEncoder(), td = new TextDecoder();
+  var $ = function (id) { return document.getElementById(id); };
+  var b64 = function (s) { return Uint8Array.from(atob(s), function (c) { return c.charCodeAt(0); }); };
+  var u64 = function (u) { var s = ''; u.forEach(function (x) { s += String.fromCharCode(x); }); return btoa(s); };
+  var st = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+             set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+             del: function (k) { try { localStorage.removeItem(k); } catch (e) {} } };
+  function derive(pw) {
+    return crypto.subtle.importKey('raw', te.encode(pw), 'PBKDF2', false, ['deriveBits']).then(function (b) {
+      return crypto.subtle.deriveBits({ name: 'PBKDF2', salt: b64(E.salt), iterations: E.iter, hash: 'SHA-256' }, b, 512);
+    }).then(function (x) { return new Uint8Array(x); });
+  }
+  function open(raw) {
+    return Promise.all([
+      crypto.subtle.importKey('raw', raw.slice(0, 32), { name: 'AES-CTR' }, false, ['decrypt']),
+      crypto.subtle.importKey('raw', raw.slice(32), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
+    ]).then(function (k) {
+      return Promise.all(E.files.map(function (f) {
+        var iv = b64(f.iv), ct = b64(f.ct), m = new Uint8Array(iv.length + ct.length);
+        m.set(iv); m.set(ct, iv.length);
+        return crypto.subtle.verify('HMAC', k[1], b64(f.mac), m).then(function (ok) {
+          if (!ok) throw new Error('mac');
+          return crypto.subtle.decrypt({ name: 'AES-CTR', counter: iv, length: 64 }, k[0], ct);
+        }).then(function (pt) { return td.decode(pt); });
+      }));
+    });
+  }
+  function run(srcs) {
+    $('gate').remove();
+    srcs.forEach(function (s, i) {
+      var el = document.createElement('script');
+      el.text = s.split('@@GEN@@').join(E.generated || '') + '\n//# sourceURL=' + E.files[i].n;
+      document.body.appendChild(el);
+    });
+  }
+  function fail(msg) { $('gate-err').hidden = false; if (msg) $('gate-err').textContent = msg; }
+  if (!window.crypto || !crypto.subtle) { fail('浏览器不支持本地解密 / Browser lacks Web Crypto'); return; }
+  var saved = st.get(KEY);
+  if (saved) { $('gate').style.visibility = 'hidden'; open(b64(saved)).then(run, function () { st.del(KEY); $('gate').style.visibility = ''; }); }
+  document.querySelector('#gate form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = document.querySelector('#gate button'); btn.disabled = true; $('gate-err').hidden = true;
+    derive($('gate-pw').value).then(function (raw) {
+      return open(raw).then(function (srcs) { if ($('gate-rm').checked) st.set(KEY, u64(raw)); run(srcs); });
+    }).catch(function () { fail('口令不正确 / Wrong password'); btn.disabled = false; $('gate-pw').select(); });
+  });
+  $('gate-pw').focus();
+})();
+</script>
 </body>
 </html>
