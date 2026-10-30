@@ -42,6 +42,103 @@
 .gate-box button[disabled]{opacity:.6}.gate-err{margin:0;color:#b42318;font-size:13px}</style>
 <script src="site.enc.js"></script>
 <script>
+/* HiAE（draft-pham-cfrg-hiae-06）解密，纯 JavaScript。状态 16 块 × 4 个大端 32 位字，AESL 用 T 表。 */
+var HiAE = (function () {
+  var S = new Uint8Array(256), T0 = new Uint32Array(256), T1 = new Uint32Array(256), T2 = new Uint32Array(256), T3 = new Uint32Array(256);
+  var xt = function (a) { return a & 0x80 ? ((a << 1) ^ 0x1b) & 0xff : a << 1; };
+  (function () {
+    var p = 1, q = 1;
+    do {
+      p = p ^ ((p << 1) & 0xff) ^ (p & 0x80 ? 0x1b : 0);
+      q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xff; if (q & 0x80) q ^= 0x09;
+      S[p] = q ^ (((q << 1) | (q >>> 7)) & 0xff) ^ (((q << 2) | (q >>> 6)) & 0xff) ^ (((q << 3) | (q >>> 5)) & 0xff) ^ (((q << 4) | (q >>> 4)) & 0xff) ^ 0x63;
+    } while (p !== 1);
+    S[0] = 0x63;
+    for (var i = 0; i < 256; i++) {
+      var s = S[i], s2 = xt(s), t = ((s2 << 24) | (s << 16) | (s << 8) | (s2 ^ s)) >>> 0;
+      T0[i] = t; T1[i] = ((t >>> 8) | (t << 24)) >>> 0; T2[i] = ((t >>> 16) | (t << 16)) >>> 0; T3[i] = ((t >>> 24) | (t << 8)) >>> 0;
+    }
+  })();
+  function rd(b, i) { return ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0; }
+  function wr(b, i, v) { b[i] = v >>> 24; b[i + 1] = (v >>> 16) & 255; b[i + 2] = (v >>> 8) & 255; b[i + 3] = v & 255; }
+  function hex(h) { var u = new Uint8Array(h.length / 2); for (var i = 0; i < u.length; i++) u[i] = parseInt(h.substr(2 * i, 2), 16); return u; }
+  var C0 = hex('3243f6a8885a308d313198a2e0370734'), C1 = hex('4a40938222 99f31d0082efa98ec4e6c8'.replace(' ', ''));
+  function St(key, nonce) {
+    this.w = new Uint32Array(64); this.o = 0;
+    var k0 = key.subarray(0, 16), k1 = key.subarray(16, 32), z = new Uint8Array(16);
+    var nk = new Uint8Array(16), cc = new Uint8Array(16);
+    for (var i = 0; i < 16; i++) { nk[i] = nonce[i] ^ k1[i]; cc[i] = C0[i] ^ C1[i]; }
+    [C0, k0, C0, nonce, z, k0, z, C1, k1, z, nk, C0, C1, k1, z, cc].forEach(function (b, j) { for (var k = 0; k < 4; k++) this.w[4 * j + k] = rd(b, 4 * k); }, this);
+    this.a = new Uint32Array(4); this.b = new Uint32Array(4); this.t = new Uint32Array(4);
+    var x0 = this.blk(k0), x1 = this.blk(k1);
+    for (var r = 0; r < 16; r++) { this.upd(x0, 0); this.upd(x1, 0); }
+  }
+  St.prototype.blk = function (b, off) { off = off || 0; return new Uint32Array([rd(b, off), rd(b, off + 4), rd(b, off + 8), rd(b, off + 12)]); };
+  St.prototype.aesl = function (i, out) {   // out = AESL(state words at index i..i+3)
+    var w = this.w, a = w[i], b = w[i + 1], c = w[i + 2], d = w[i + 3];
+    out[0] = T0[a >>> 24] ^ T1[(b >>> 16) & 255] ^ T2[(c >>> 8) & 255] ^ T3[d & 255];
+    out[1] = T0[b >>> 24] ^ T1[(c >>> 16) & 255] ^ T2[(d >>> 8) & 255] ^ T3[a & 255];
+    out[2] = T0[c >>> 24] ^ T1[(d >>> 16) & 255] ^ T2[(a >>> 8) & 255] ^ T3[b & 255];
+    out[3] = T0[d >>> 24] ^ T1[(a >>> 16) & 255] ^ T2[(b >>> 8) & 255] ^ T3[c & 255];
+  };
+  St.prototype.core = function () {          // a = AESL(S0 ^ S1)；b = AESL(S13)
+    var w = this.w, o = this.o, i0 = 4 * o, i1 = 4 * ((o + 1) & 15), x = this.t;
+    for (var k = 0; k < 4; k++) x[k] = w[i0 + k] ^ w[i1 + k];
+    var a = x[0], b = x[1], c = x[2], d = x[3], r = this.a;
+    r[0] = T0[a >>> 24] ^ T1[(b >>> 16) & 255] ^ T2[(c >>> 8) & 255] ^ T3[d & 255];
+    r[1] = T0[b >>> 24] ^ T1[(c >>> 16) & 255] ^ T2[(d >>> 8) & 255] ^ T3[a & 255];
+    r[2] = T0[c >>> 24] ^ T1[(d >>> 16) & 255] ^ T2[(a >>> 8) & 255] ^ T3[b & 255];
+    r[3] = T0[d >>> 24] ^ T1[(a >>> 16) & 255] ^ T2[(b >>> 8) & 255] ^ T3[c & 255];
+    this.aesl(4 * ((o + 13) & 15), this.b);
+  };
+  St.prototype.fin = function (t, xi) {      // S0 = AESL(S13) ^ t；S3 ^= xi；S13 ^= xi；Rol
+    var w = this.w, o = this.o, i0 = 4 * o, i3 = 4 * ((o + 3) & 15), i13 = 4 * ((o + 13) & 15);
+    for (var k = 0; k < 4; k++) { w[i0 + k] = this.b[k] ^ t[k]; w[i3 + k] ^= xi[k]; w[i13 + k] ^= xi[k]; }
+    this.o = (o + 1) & 15;
+  };
+  St.prototype.upd = function (xi) {
+    this.core(); var t = new Uint32Array(4);
+    for (var k = 0; k < 4; k++) t[k] = this.a[k] ^ xi[k];
+    this.fin(t, xi);
+  };
+  St.prototype.dec = function (ci, mi) {     // ci, mi: Uint32Array(4)
+    var w = this.w, i9 = 4 * ((this.o + 9) & 15), t = new Uint32Array(4);
+    this.core();
+    for (var k = 0; k < 4; k++) { t[k] = ci[k] ^ w[i9 + k]; mi[k] = this.a[k] ^ t[k]; }
+    this.fin(t, mi);
+  };
+  function decrypt(ct, tag, ad, key, nonce) {
+    var st = new St(key, nonce), i, k, ci = new Uint32Array(4), mi = new Uint32Array(4);
+    for (i = 0; i < ad.length; i += 16) { var pa = new Uint8Array(16); pa.set(ad.subarray(i, i + 16)); st.upd(st.blk(pa)); }
+    var full = ct.length - ct.length % 16, out = new Uint8Array(ct.length);
+    for (i = 0; i < full; i += 16) {
+      ci[0] = rd(ct, i); ci[1] = rd(ct, i + 4); ci[2] = rd(ct, i + 8); ci[3] = rd(ct, i + 12);
+      st.dec(ci, mi); for (k = 0; k < 4; k++) wr(out, i + 4 * k, mi[k]);
+    }
+    if (full < ct.length) {
+      var n = ct.length - full, cb = new Uint8Array(16); cb.set(ct.subarray(full));
+      st.core(); var w = st.w, i9 = 4 * ((st.o + 9) & 15), ks = new Uint8Array(16);
+      for (k = 0; k < 4; k++) wr(ks, 4 * k, (st.a[k] ^ rd(cb, 4 * k) ^ w[i9 + k]) >>> 0);
+      for (k = n; k < 16; k++) cb[k] = ks[k];
+      ci = st.blk(cb); st.dec(ci, mi); var mb = new Uint8Array(16);
+      for (k = 0; k < 4; k++) wr(mb, 4 * k, mi[k]);
+      out.set(mb.subarray(0, n), full);
+    }
+    var lb = new Uint8Array(16), dv = new DataView(lb.buffer);
+    dv.setUint32(0, (ad.length * 8) >>> 0, true); dv.setUint32(4, Math.floor(ad.length * 8 / 4294967296), true);
+    dv.setUint32(8, (ct.length * 8) >>> 0, true); dv.setUint32(12, Math.floor(ct.length * 8 / 4294967296), true);
+    var tt = st.blk(lb);
+    for (i = 0; i < 16; i++) { st.upd(tt); st.upd(tt); }
+    var acc = new Uint32Array(4); for (i = 0; i < 16; i++) for (k = 0; k < 4; k++) acc[k] ^= st.w[4 * i + k];
+    var tb = new Uint8Array(16); for (k = 0; k < 4; k++) wr(tb, 4 * k, acc[k]);
+    var diff = 0; for (i = 0; i < 16; i++) diff |= tb[i] ^ tag[i];
+    if (diff) { out.fill(0); return null; }
+    return out;
+  }
+  return { decrypt: decrypt };
+})();
+if (typeof module !== 'undefined') module.exports = HiAE;
+
 (function () {
   var E = window.__SITE_ENC, KEY = 'ngcc.sitekey.' + E.kid, te = new TextEncoder(), td = new TextDecoder();
   var $ = function (id) { return document.getElementById(id); };
@@ -56,18 +153,14 @@
     }).then(function (x) { return new Uint8Array(x); });
   }
   function open(raw) {
-    return Promise.all([
-      crypto.subtle.importKey('raw', raw.slice(0, 32), { name: 'AES-CTR' }, false, ['decrypt']),
-      crypto.subtle.importKey('raw', raw.slice(32), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
-    ]).then(function (k) {
-      return Promise.all(E.files.map(function (f) {
-        var iv = b64(f.iv), ct = b64(f.ct), m = new Uint8Array(iv.length + ct.length);
-        m.set(iv); m.set(ct, iv.length);
-        return crypto.subtle.verify('HMAC', k[1], b64(f.mac), m).then(function (ok) {
-          if (!ok) throw new Error('mac');
-          return crypto.subtle.decrypt({ name: 'AES-CTR', counter: iv, length: 64 }, k[0], ct);
-        }).then(function (pt) { return td.decode(pt); });
-      }));
+    return new Promise(function (ok, no) {
+      var key = raw.slice(0, 32), out = [];
+      for (var i = 0; i < E.files.length; i++) {
+        var f = E.files[i], m = HiAE.decrypt(b64(f.ct), b64(f.tag), te.encode(f.n), key, b64(f.nonce));
+        if (!m) return no(new Error('tag'));
+        out.push(td.decode(m));
+      }
+      ok(out);
     });
   }
   function run(srcs) {
