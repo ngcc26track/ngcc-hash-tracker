@@ -153,7 +153,7 @@ th.r,td.r{text-align:right}
 .cands td.alg a{font-weight:600;color:var(--ink)}
 .route{font-size:12.5px;font-weight:600;color:var(--ink-2)}
 .cands td.alg{min-width:150px;width:210px}
-.cands td.alg .aff{max-width:210px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}.cands td:nth-child(6){min-width:175px}
+.cands td.alg .aff{max-width:210px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}.cands td:nth-child(7){min-width:175px}
 .cands td:nth-child(3) .lv{white-space:normal;line-height:1.35;max-width:150px}.cands td:nth-child(3) .lv b{flex:none}
 .empty{color:var(--muted);text-align:center;padding:20px}
 
@@ -461,3 +461,9 @@ tr.wd td{opacity:.5} tr.wd:hover td{opacity:.8}
 sup,sub{font-size:.75em;line-height:0;position:relative;vertical-align:baseline}
 sup{top:-.45em}
 sub{bottom:-.2em}
+/* 最新动态列 */
+td.lat-c{min-width:210px;max-width:240px}
+html[lang="en"] td.lat-c{min-width:128px}
+html[lang^="zh"] .cands td:nth-child(3) .lv{white-space:nowrap}
+.lat{display:block;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.lat-d{display:block;margin-top:3px;font:500 11.5px var(--mono);color:var(--muted)}
